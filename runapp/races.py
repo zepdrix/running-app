@@ -97,12 +97,27 @@ def unlogged_garmin_races(conn: sqlite3.Connection) -> list[dict]:
 
 
 def match_activity(conn: sqlite3.Connection, day: str, distance_m: float) -> int | None:
-    """The run on that day closest to the race distance."""
+    """The run on that day closest to the race distance. Warm-ups, cool-downs and other runs
+    far from the race distance (under 80% or over 130% of it) are never matched."""
     row = conn.execute(
-        "SELECT id FROM activities WHERE is_run = 1 AND substr(start_local, 1, 10) = ? ORDER BY ABS(distance_m - ?) LIMIT 1",
-        (day, distance_m),
+        """SELECT id FROM activities WHERE is_run = 1 AND substr(start_local, 1, 10) = ?
+           AND distance_m BETWEEN ? AND ? ORDER BY ABS(distance_m - ?) LIMIT 1""",
+        (day, 0.8 * distance_m, 1.3 * distance_m, distance_m),
     ).fetchone()
     return row["id"] if row else None
+
+
+def link_activities(conn: sqlite3.Connection, today: date | None = None) -> int:
+    """Give races that have been run but have no activity yet (entered before race day) their run."""
+    today = (today or date.today()).isoformat()
+    linked = 0
+    for r in conn.execute("SELECT id, date, distance_m FROM races WHERE activity_id IS NULL AND date <= ?", (today,)).fetchall():
+        activity_id = match_activity(conn, r["date"], r["distance_m"])
+        if activity_id:
+            conn.execute("UPDATE races SET activity_id = ? WHERE id = ?", (activity_id, r["id"]))
+            linked += 1
+    conn.commit()
+    return linked
 
 
 def save(conn: sqlite3.Connection, race: dict, race_id: int | None = None) -> int:

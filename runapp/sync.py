@@ -8,6 +8,7 @@ the normalized version used by the dashboard.
 import getpass
 import json
 import logging
+import socket
 import sqlite3
 import time
 from collections.abc import Callable
@@ -19,17 +20,30 @@ from garminconnect import (
     GarminConnectTooManyRequestsError,
 )
 
-from . import config, store, weather, wellness, zones
+from . import config, races, store, weather, wellness, zones
 from .streams import fit_bytes_from_zip, parse_fit, samples_from_details
 
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 100
 REQUEST_PAUSE_S = 0.5  # be gentle with Garmin between per-activity requests
+FAILED = "Sync failed"  # run_sync's message starts with this when the sync as a whole failed
 
 
 class NotLoggedIn(Exception):
     pass
+
+
+class GarminUnreachable(Exception):
+    pass
+
+
+def _garmin_reachable() -> bool:
+    try:
+        socket.create_connection(("connect.garmin.com", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
 
 
 def login(interactive: bool = True) -> Garmin:
@@ -44,6 +58,9 @@ def login(interactive: bool = True) -> Garmin:
             client.login(str(config.TOKEN_PATH))
             return client
         except Exception as e:
+            # The library reports a dropped connection the same way as an expired session, so check which it is.
+            if not _garmin_reachable():
+                raise GarminUnreachable("Couldn't reach Garmin. Check the Mac's internet connection and try again.") from e
             log.warning("Saved Garmin session no longer valid (%s)", e)
             if not interactive:
                 raise NotLoggedIn("Garmin session expired; run `.venv/bin/python -m runapp login`") from e
@@ -228,6 +245,7 @@ def run_sync(
                 conn.rollback()
             time.sleep(REQUEST_PAUSE_S)
         zones.backfill(conn)  # activities whose details failed still get Garmin's zone times
+        races.link_activities(conn)  # races entered before race day now have their run
         sync_snapshots(client, conn)
         try:
             sync_vo2max(client, conn)
@@ -247,7 +265,7 @@ def run_sync(
             message += f" ({failed} failed; they will be retried next sync)"
         status = "ok"
     except Exception as e:
-        message, status = f"Sync failed: {e}", "error"
+        message, status = f"{FAILED}: {e}", "error"
         log.exception("Sync failed")
     conn.execute(
         "UPDATE sync_log SET finished_at = datetime('now'), status = ?, message = ? WHERE id = ?",

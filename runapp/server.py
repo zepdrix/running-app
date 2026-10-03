@@ -3,6 +3,7 @@
 import asyncio
 import threading
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
@@ -23,8 +24,31 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 PUBLIC_PATHS = {"/login", "/api/login", "/manifest.webmanifest", "/sw.js", "/static/style.css", "/static/login.js"}
 
 
+def _cross_site(request: Request) -> bool:
+    """A browser request started by another website rather than by this app's own page."""
+    site = request.headers.get("sec-fetch-site")
+    if site:
+        return site not in ("same-origin", "none")
+    origin = request.headers.get("origin")
+    if not origin:
+        return False  # not a browser
+    ours = {request.url.hostname, (request.headers.get("x-forwarded-host") or "").split(":")[0]}
+    return urlsplit(origin).hostname not in ours
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
+    # The app holds health data and can start syncs and coach runs, so other websites open in the
+    # same browser must not be able to reach it: only answer to our own names, and only let our
+    # own page change things.
+    host = request.url.hostname or ""
+    if host not in config.ALLOWED_HOSTS and not host.endswith(".ts.net"):
+        return JSONResponse(
+            {"detail": f"Host {host!r} isn't allowed. To allow it, start the app with RUNAPP_ALLOWED_HOSTS={host}"},
+            status_code=403,
+        )
+    if request.method not in ("GET", "HEAD", "OPTIONS") and _cross_site(request):
+        return JSONResponse({"detail": "Requests from other websites aren't accepted."}, status_code=403)
     path = request.url.path
     if not auth.enabled() or path in PUBLIC_PATHS or path.startswith("/static/icons/"):
         return await call_next(request)
@@ -158,21 +182,29 @@ def delete_goal(goal_id: int):
     return {"ok": True}
 
 
-def _sync_worker(full: bool):
+def _sync_worker(full: bool) -> str | None:
+    """Run a sync. Returns what went wrong, or None when it worked."""
     def progress(msg):
         _sync_state["message"] = msg
 
-    conn = db.connect()
+    conn = error = None
     try:
+        conn = db.connect()
         client = sync.login(interactive=False)
-        sync.run_sync(conn, client, full=full, progress=progress)
-    except sync.NotLoggedIn as e:
-        _sync_state["message"] = str(e)
+        message = sync.run_sync(conn, client, full=full, progress=progress)
+        if message.startswith(sync.FAILED):
+            error = message
+    except (sync.NotLoggedIn, sync.GarminUnreachable) as e:
+        error = str(e)
     except Exception as e:
-        _sync_state["message"] = f"Sync failed: {e}"
+        error = f"{sync.FAILED}: {e}"
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+        if error:
+            _sync_state["message"] = error
         _sync_state["running"] = False
+    return error
 
 
 @app.post("/api/sync")
@@ -293,17 +325,19 @@ def get_status():
 @app.post("/api/status")
 def refresh_status(units: str = "km", sync_first: bool = True):
     # Pull the latest from Garmin first so "last 12 hours" is current, unless a sync is already running.
+    sync_error = None
     if sync_first and not config.DEMO:
         with _sync_lock:
             start = not _sync_state["running"]
             if start:
                 _sync_state.update(running=True, message="Syncing for status…")
         if start:
-            _sync_worker(False)
+            sync_error = _sync_worker(False)
     conn = db.connect()
     try:
         status.generate(conn, units)
-        return status.latest(conn)
+        # sync_error: the status was written from the data already saved, which may be out of date.
+        return {**status.latest(conn), "sync_error": sync_error}
     except status.StatusError as e:
         raise HTTPException(503, str(e)) from e
     finally:

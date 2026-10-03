@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 FIRST_SYNC_DAYS = 14
 LATER_SYNC_DAYS = 3
+MAX_SYNC_DAYS = 30
 
 
 def _fetchers(client):
@@ -31,8 +32,13 @@ def _fetchers(client):
 
 def sync_wellness(client, conn: sqlite3.Connection, today: date | None = None) -> None:
     today = today or date.today()
-    have_any = conn.execute("SELECT 1 FROM wellness LIMIT 1").fetchone()
-    days = LATER_SYNC_DAYS if have_any else FIRST_SYNC_DAYS
+    last = conn.execute("SELECT MAX(date) AS d FROM wellness WHERE kind = 'stats'").fetchone()["d"]
+    if last:
+        # Back to the last day already saved, so a week without syncing doesn't leave a hole.
+        gap = (today - date.fromisoformat(last)).days + 1
+        days = min(MAX_SYNC_DAYS, max(LATER_SYNC_DAYS, gap))
+    else:
+        days = FIRST_SYNC_DAYS
     folder = config.RAW_DIR / "wellness"
     folder.mkdir(parents=True, exist_ok=True)
 

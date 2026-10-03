@@ -143,7 +143,9 @@ def generate(conn: sqlite3.Connection, units: str = "km", now: datetime | None =
             data=json.dumps(build_snapshot(conn, now), default=str),
         )
         try:
-            result = runner("Write the status card.", prompt, ["--json-schema", json.dumps(REPORT_SCHEMA)], 180)
+            # One-off: no need to keep a transcript of it among your Claude Code sessions.
+            args = ["--json-schema", json.dumps(REPORT_SCHEMA), "--no-session-persistence"]
+            result = runner("Write the status card.", prompt, args, 180)
         except coach.CoachError as e:
             raise StatusError(str(e)) from e
         report = result.get("structured_output")

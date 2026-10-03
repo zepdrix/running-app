@@ -140,7 +140,7 @@ def reset(conn: sqlite3.Connection) -> None:
 def run_claude(message: str, system_prompt: str, extra_args: list[str], timeout: int = TIMEOUT_S) -> dict:
     """Run `claude -p` with no built-in tools and none of your personal settings; return its JSON result."""
     cmd = [
-        _claude_bin(), "-p", message,
+        _claude_bin(), "-p",                # the message goes in on stdin: as an argument, one starting with "-" is read as an option
         "--output-format", "json",
         "--system-prompt", system_prompt,
         "--tools", "",                      # no built-in tools: no shell, files or web
@@ -151,7 +151,7 @@ def run_claude(message: str, system_prompt: str, extra_args: list[str], timeout:
     ]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=config.ROOT,
+            cmd, input=message, capture_output=True, text=True, timeout=timeout, cwd=config.ROOT,
             env={**os.environ, "RUNAPP_DATA_DIR": str(config.DATA_DIR)},
         )
     except subprocess.TimeoutExpired as e:
@@ -207,12 +207,10 @@ def ask(conn: sqlite3.Connection, message: str, units: str = "km") -> dict:
         notes, plan_text, zone_text = get_notes(conn), get_plan(conn), zones.prompt_text(conn)
         try:
             result = _run(message, session_id, units, notes, plan_text, zone_text)
-        except CoachTimeout:
-            raise
-        except CoachError:
-            if not session_id:
+        except CoachError as e:
+            if not session_id or "No conversation found" not in str(e):
                 raise
-            # The saved conversation may be gone (e.g. Claude Code cleaned it up); start a new one.
+            # The saved conversation is gone (e.g. Claude Code cleaned it up); start a new one.
             result = _run(message, None, units, notes, plan_text, zone_text)
 
         reply = result.get("result", "").strip()

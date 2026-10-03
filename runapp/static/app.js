@@ -75,8 +75,9 @@ document.addEventListener("click", (e) => {
   state.heatAdj = b.dataset.heat === "1";
   try { localStorage.setItem("heatAdj", state.heatAdj ? "1" : "0"); } catch {}
   document.querySelectorAll("[data-heat]").forEach((x) => x.setAttribute("aria-pressed", String((x.dataset.heat === "1") === state.heatAdj)));
-  renderCharts();
-  if (woData) { renderWorkoutTrend(); renderWorkoutDetail(); }
+  // Redraw from the data already loaded; nothing needs fetching again.
+  if (state.tab === "training") renderCharts();
+  if (state.tab === "workouts" && woData) { renderWorkoutTrend(); renderWorkoutDetail(); }
 });
 
 // ---------- icons & kinds ----------
@@ -120,10 +121,28 @@ const kindChip = (k) => `<span class="kind k-${KINDS[k] ? k : "easy"}">${(KINDS[
 const kindLegend = (kinds) => kinds.map((k) => `<span><i class="swatch" style="background:${css(KINDS[k].color)}"></i>${KINDS[k].label}</span>`).join("");
 
 // ---------- data ----------
+// GET some JSON; throws when the app can't be reached or answers with an error.
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  return res.json();
+}
+
 async function load() {
-  const res = await fetch(`/api/dashboard?weeks=${state.weeks}`);
-  state.data = await res.json();
+  const first = !state.data;
+  try {
+    state.data = await getJSON(`/api/dashboard?weeks=${state.weeks}`);
+  } catch {
+    // Keep showing what's already on screen; with nothing to show, say why the page is empty.
+    if (first) {
+      const el = document.getElementById("offline-banner");
+      el.innerHTML = `<b>! Couldn't load your data.</b> Is your Mac on and running the app? <button type="button" class="link-btn" onclick="location.reload()">Try again</button>`;
+      el.hidden = false;
+    }
+    return;
+  }
   render();
+  if (!first && !planEditing) loadPlan(); // new data can change what was done on each planned day
 }
 
 function render() {
@@ -145,7 +164,7 @@ function render() {
   renderPredictions(d.predictions);
   renderActivities(d.activities);
   renderCharts();
-  if (typeof planData !== "undefined" && !planEditing) loadPlan();
+  if (planLoaded && !planEditing) renderPlan(); // distances there follow the unit setting
 }
 
 // Charts can only measure themselves when visible, so draw just the active tab's.
@@ -557,22 +576,32 @@ const syncBtn = document.getElementById("sync-btn");
 async function pollSync() {
   syncPolling = true;
   syncBtn.disabled = true;
-  while (true) {
-    const s = await (await fetch("/api/sync")).json();
-    setSyncStatus(s.message);
-    if (!s.running) break;
-    await new Promise((r) => setTimeout(r, 1500));
+  try {
+    while (true) {
+      const s = await getJSON("/api/sync");
+      setSyncStatus(s.message);
+      if (!s.running) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } catch {
+    setSyncStatus("Lost contact with the app while it was syncing.");
+    return;
+  } finally {
+    syncPolling = false;
+    syncBtn.disabled = false;
   }
-  syncPolling = false;
-  syncBtn.disabled = false;
   load();
   refreshStatus(false);
 }
 
 syncBtn.addEventListener("click", async () => {
-  const s = await (await fetch("/api/sync", { method: "POST" })).json();
-  setSyncStatus(s.message);
-  if (s.running) pollSync();
+  try {
+    const s = await (await fetch("/api/sync", { method: "POST" })).json();
+    setSyncStatus(s.message);
+    if (s.running) pollSync();
+  } catch {
+    setSyncStatus("Couldn't reach the app server.");
+  }
 });
 
 // ---------- controls ----------
@@ -593,7 +622,7 @@ document.querySelectorAll(".range button").forEach((b) =>
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
 
 load();
-fetch("/api/sync").then((r) => r.json()).then((s) => s.running && pollSync()).catch(() => {}); // offline: nothing to resume
+getJSON("/api/sync").then((s) => s.running && pollSync()).catch(() => {}); // offline: nothing to resume
 
 // ---------- coach ----------
 const coachLog = document.getElementById("coach-log");
@@ -616,7 +645,12 @@ function addMessage(role, content) {
 }
 
 async function loadCoach() {
-  const { messages } = await (await fetch("/api/coach")).json();
+  let messages;
+  try {
+    ({ messages } = await getJSON("/api/coach"));
+  } catch {
+    return;
+  }
   coachLog.innerHTML = "";
   messages.forEach((m) => addMessage(m.role, m.content));
   renderProposals();
@@ -682,7 +716,12 @@ const notesToggle = document.getElementById("notes-toggle");
 const notesSaved = document.getElementById("notes-saved");
 
 async function loadNotes() {
-  const { notes } = await (await fetch("/api/coach/notes")).json();
+  let notes;
+  try {
+    ({ notes } = await getJSON("/api/coach/notes"));
+  } catch {
+    return;
+  }
   notesText.value = notes;
   // First visit: open the notes so they get filled in.
   if (!notes) setNotesOpen(true);
@@ -732,6 +771,7 @@ const planEl = {
   saved: document.getElementById("plan-saved"),
 };
 let planData = { notes: "", sessions: [] };
+let planLoaded = false;
 let planEditing = false;
 
 const isoToday = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
@@ -874,7 +914,12 @@ function renderPlan() {
 }
 
 async function loadPlan() {
-  planData = await (await fetch("/api/plan")).json();
+  try {
+    planData = await getJSON("/api/plan");
+  } catch {
+    return;
+  }
+  planLoaded = true;
   if (!planEditing) renderPlan();
 }
 
@@ -954,7 +999,12 @@ document.querySelector(".view-today").addEventListener("click", (e) => {
 });
 
 async function loadStatus() {
-  const s = await (await fetch("/api/status")).json();
+  let s;
+  try {
+    s = await getJSON("/api/status");
+  } catch {
+    return;
+  }
   renderStatus(s);
   const stale = !s.generated_at || Date.now() - new Date(s.generated_at.replace(" ", "T")).getTime() > STATUS_STALE_MS;
   if (stale && !syncPolling) refreshStatus(true);
@@ -973,7 +1023,9 @@ async function refreshStatus(syncFirst = true) {
     const body = await res.json();
     if (res.ok) {
       renderStatus(body);
-      if (syncFirst) load();
+      if (syncFirst) await load();
+      // The status was still written, from the data already saved; say why it may be out of date.
+      if (body.sync_error) setSyncStatus(body.sync_error);
     } else {
       statusTime.textContent = body.detail || "Couldn't update the status.";
     }
@@ -1456,7 +1508,9 @@ function renderPacing() {
   const miles = r.distance_m / 1609.344;
   const pace = target / miles;
   const rows = [];
-  for (let i = 1; i <= Math.floor(miles); i++) rows.push({ label: `Mile ${i}`, at: pace * i });
+  const whole = Math.floor(miles + 0.005); // a 10-mile race finishes at the mile 10 marker, with no stub after it
+  const tail = miles - whole;
+  for (let i = 1; i <= whole; i++) if (i < whole || tail >= 0.005) rows.push({ label: `Mile ${i}`, at: pace * i });
   rows.push({ label: `Finish (${miles.toFixed(2)} mi)`, at: target, finish: true });
   const factor = r.course_history?.watch_distance_factor;
   const long = factor && factor > 1.015;
@@ -1467,7 +1521,7 @@ function renderPacing() {
       ${r.course_pr_s ? `<span class="metric" style="--m:${css("--c-threshold")}">Course PR <b>${fmtRaceTime(r.course_pr_s)}</b></span>` : ""}
     </div>
     <table class="pace-table"><thead><tr><th>Marker</th><th>Clock at marker</th><th>That mile</th></tr></thead>
-    <tbody>${rows.map((x, i) => `<tr><td>${x.label}</td><td class="split">${fmtTime(x.at)}</td><td>${x.finish ? `${fmtTime(x.at - (rows[i - 1]?.at || 0))} for the last ${(miles - Math.floor(miles)).toFixed(2)} mi` : `${fmtTime(pace)}`}</td></tr>`).join("")}</tbody></table>
+    <tbody>${rows.map((x, i) => `<tr><td>${x.label}</td><td class="split">${fmtTime(x.at)}</td><td>${x.finish && tail >= 0.005 ? `${fmtTime(x.at - (rows[i - 1]?.at || 0))} for the last ${tail.toFixed(2)} mi` : `${fmtTime(pace)}`}</td></tr>`).join("")}</tbody></table>
     ${long ? `<div class="pace-note"><b>Watch note:</b> last time on this course your watch measured ${Math.round((factor - 1) * 100)}% long (${esc(r.course_history.name)}). Pace off the official mile markers and race clock. On target, your watch will show about <b>${fmtTime(pace / factor)}/mi</b>, which looks faster than it is.</div>` : ""}
     <p class="sub" style="margin-top:10px">Even splits. Ask the coach to shape them for the course, e.g. a hill late in the race.</p>`;
 }
@@ -1512,16 +1566,25 @@ async function loadProposals() {
   renderProposals();
 }
 
+let proposalBusy = false; // a second click while the first is still being handled is ignored
 async function actOnProposal(id, action) {
-  const res = await fetch(`/api/plan/proposals/${id}/${action}`, { method: "POST" });
-  if (action === "apply" && res.ok) {
-    planData = await res.json();
-    renderPlan();
-    planEl.saved.textContent = "Applied the coach's changes. Refresh the Status card to update your next workout.";
+  if (proposalBusy) return;
+  proposalBusy = true;
+  try {
+    const res = await fetch(`/api/plan/proposals/${id}/${action}`, { method: "POST" });
+    if (action === "apply" && res.ok) {
+      planData = await res.json();
+      renderPlan();
+      planEl.saved.textContent = "Applied the coach's changes. Refresh the Status card to update your next workout.";
+    }
+    if (!res.ok) alert((await res.json()).detail || "Couldn't update the proposal.");
+    await loadProposals();
+    if (action === "apply" && res.ok) addMessage("thinking", "✓ Applied to your plan.");
+  } catch {
+    alert("Couldn't reach the app server.");
+  } finally {
+    proposalBusy = false;
   }
-  if (!res.ok) alert((await res.json()).detail || "Couldn't update the proposal.");
-  await loadProposals();
-  if (action === "apply" && res.ok) addMessage("thinking", "✓ Applied to your plan.");
 }
 document.addEventListener("click", (e) => {
   const a = e.target.closest("[data-apply]");

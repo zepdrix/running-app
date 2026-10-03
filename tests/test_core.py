@@ -583,7 +583,8 @@ def test_heat_adjusted_efficiency_and_races(conn):
     assert by_id[2]["weather"]["dew_point_f"] == pytest.approx(61, abs=0.5)
     assert 1.5 < by_id[2]["weather"]["heat_cost_pct"] < 2.5
 
-    races.save(conn, {"date": "2026-08-10", "name": "Hot 5k", "distance_m": 5000, "effort": "all_out", "official_time_s": 1350})
+    races.save(conn, {"date": "2026-08-10", "name": "Hot 5k", "distance_m": 5000, "effort": "all_out", "official_time_s": 1350,
+                      "activity_id": 1})  # linked by hand: an 8 km run is too long to be matched to a 5k on its own
     (r,) = races.all_races(conn, today=date(2026, 8, 20))["past"]
     assert r["adjusted_time_s"] == pytest.approx(1350 / 1.08)
     (res,) = races.all_out_results(conn, date(2026, 8, 20))

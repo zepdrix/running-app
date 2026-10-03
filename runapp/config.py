@@ -20,3 +20,7 @@ BEST_EFFORT_DISTANCES = {
     "Marathon": 42195,
 }
 DEMO = False  # set by `serve --demo`; disables syncing into the demo database
+
+# Host names the app answers to (any *.ts.net Tailscale name is also accepted; see server.py).
+# Add others, comma-separated, in RUNAPP_ALLOWED_HOSTS.
+ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"} | {h.strip() for h in os.getenv("RUNAPP_ALLOWED_HOSTS", "").split(",") if h.strip()}
