@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Running Log</title>
+  <meta name="theme-color" content="#121720">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Running Log">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body>
+<div class="app">
+  <!-- Navigation: a rail on wide screens, a bottom tab bar on phones -->
+  <nav class="rail tabs" role="tablist" aria-label="Sections">
+    <img class="brand-mark" src="/static/icons/icon-192.png" alt="" width="48" height="48">
+    <button role="tab" data-tab="overview"><span class="icon" data-icon="gauge"></span><span>Today</span></button>
+    <button role="tab" data-tab="plan"><span class="icon" data-icon="calendar"></span><span>Plan</span></button>
+    <button role="tab" data-tab="workouts"><span class="icon" data-icon="zap"></span><span>Workouts</span></button>
+    <button role="tab" data-tab="form"><span class="icon" data-icon="shoe"></span><span>Form</span></button>
+    <button role="tab" data-tab="training"><span class="icon" data-icon="heart"></span><span>Training</span></button>
+    <button role="tab" data-tab="records"><span class="icon" data-icon="award"></span><span>Records</span></button>
+    <button role="tab" data-tab="activities"><span class="icon" data-icon="list"></span><span>Activities</span></button>
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <img class="brand-mark brand-mobile" src="/static/icons/icon-192.png" alt="" width="40" height="40">
+        <div>
+          <h1 id="view-title">Today</h1>
+          <div id="data-range" class="sub"></div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span id="sync-status"></span>
+        <div class="segmented" id="units" role="group" aria-label="Units">
+          <button data-unit="km">km</button><button data-unit="mi">mi</button>
+        </div>
+        <button class="primary" id="sync-btn">Sync Garmin</button>
+        <button type="button" id="install-btn" hidden>Install app</button>
+        <button type="button" id="logout-btn" hidden>Log out</button>
+      </div>
+    </header>
+
+    <div id="offline-banner" class="banner offline-banner" role="status" hidden></div>
+    <div id="demo-banner" class="banner" hidden>
+      You're viewing synthetic demo data. Run <code>.venv/bin/python -m runapp login</code>, then
+      <code>.venv/bin/python -m runapp serve</code> to see your own Garmin activities.
+    </div>
+
+    <!-- ===== Today: one screen ===== -->
+    <section class="panel view-today" data-panel="overview" role="tabpanel">
+      <div class="tiles" id="tiles"></div>
+
+      <article class="card status-card st-body" id="st-body-card">
+        <div class="card-title">
+          <span class="badge-icon" id="status-badge"><span class="icon" data-icon="zap"></span></span>
+          <div class="grow"><h2>Body</h2><div class="sub" id="status-time"></div></div>
+          <button type="button" class="ghost icon-btn" id="status-refresh" title="Refresh status (syncs Garmin first)" aria-label="Refresh status">↻</button>
+        </div>
+        <div class="card-scroll" id="st-body"></div>
+        <div class="status-metrics" id="status-metrics"></div>
+      </article>
+
+      <article class="card status-card st-next" id="st-next-card">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="route"></span></span>
+          <div class="grow"><h2>Next workout</h2><div class="sub" id="st-next-when"></div></div>
+        </div>
+        <div class="card-scroll" id="st-next"></div>
+      </article>
+
+      <article class="card status-card st-last acc-train">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="clock"></span></span>
+          <div class="grow"><h2>Last 12 hours</h2></div>
+        </div>
+        <div class="card-scroll" id="st-last"></div>
+      </article>
+
+      <article class="card acc-train today-weekly">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="route"></span></span>
+          <div class="grow"><h2>Weekly distance</h2><div class="sub">Split by kind of run</div></div>
+          <div class="segmented range" role="group" aria-label="Range">
+            <button data-weeks="12">12 wk</button><button data-weeks="26">26 wk</button><button data-weeks="52">52 wk</button>
+          </div>
+        </div>
+        <div class="legend" id="weekly-legend"></div>
+        <div class="chart-box"><canvas id="weekly-chart" role="img" aria-label="Weekly running distance by kind of run"></canvas></div>
+      </article>
+
+      <article class="card acc-goal today-goals">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="flag"></span></span>
+          <div class="grow"><h2>Goals</h2><div class="sub">vs your best efforts, last 90 days</div></div>
+        </div>
+        <div class="card-scroll">
+          <div class="goals" id="goals"></div>
+          <details class="add-goal">
+            <summary>Add a goal</summary>
+            <form class="goal-form" id="goal-form">
+              <label>Type
+                <select name="kind">
+                  <option value="race">Race time</option>
+                  <option value="weekly_distance">Weekly distance</option>
+                  <option value="monthly_distance">Monthly distance</option>
+                  <option value="easy_hr_share">Easy running share (zones 1–2)</option>
+                </select>
+              </label>
+              <label data-for="race">Race
+                <select name="race_distance">
+                  <option value="5000">5k</option>
+                  <option value="10000">10k</option>
+                  <option value="21097.5" selected>Half marathon</option>
+                  <option value="42195">Marathon</option>
+                </select>
+              </label>
+              <label data-for="race">Target time (h:mm:ss)<input name="time" placeholder="1:55:00" size="9"></label>
+              <label data-for="race">Race day<input name="date" type="date"></label>
+              <label data-for="weekly_distance monthly_distance">Distance (<span class="unit-name">km</span>)<input name="distance" type="number" min="1" step="any" size="6"></label>
+              <label data-for="easy_hr_share">Target share (%)<input name="share" type="number" min="1" max="100" value="80" size="4"></label>
+              <label>Name (optional)<input name="label" size="16"></label>
+              <button class="primary" type="submit">Add</button>
+            </form>
+          </details>
+        </div>
+      </article>
+    </section>
+
+    <!-- ===== Plan: table + notes side by side ===== -->
+    <section class="panel view-plan" data-panel="plan" role="tabpanel" hidden>
+      <article class="card acc-coach plan-main">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="calendar"></span></span>
+          <div class="grow"><h2>Training plan</h2><div class="sub">Planned sessions next to what you actually did</div></div>
+          <div class="plan-actions" id="plan-actions"></div>
+        </div>
+        <div class="plan-summary" id="plan-summary"></div>
+        <div id="plan-proposals"></div>
+        <div class="card-scroll" id="plan-table"></div>
+        <div class="plan-saved muted" id="plan-saved"></div>
+      </article>
+      <article class="card acc-coach plan-side">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="flag"></span></span>
+          <div class="grow"><h2>Races, zones &amp; rules</h2><div class="sub">The coach reads these too</div></div>
+        </div>
+        <div class="card-scroll plan-notes" id="plan-notes"></div>
+      </article>
+    </section>
+
+    <!-- ===== Workouts: threshold & interval sessions, rep by rep ===== -->
+    <section class="panel view-workouts" data-panel="workouts" role="tabpanel" hidden>
+      <article class="card acc-intensity wo-trend">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="trend"></span></span>
+          <div class="grow"><h2>Pace at 160 bpm</h2><div class="sub">Estimated from each session's reps. Lower = fitter. Short and long reps trend separately.</div></div>
+          <div data-heat-slot></div>
+        </div>
+        <div class="legend" id="wo-legend"></div>
+        <div class="chart-box"><canvas id="wo-trend-chart" role="img" aria-label="Estimated pace at 160 bpm per session"></canvas></div>
+      </article>
+      <article class="card acc-intensity wo-list">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="list"></span></span>
+          <div class="grow"><h2>Quality sessions</h2><div class="sub">Threshold and interval runs, last 12 months</div></div>
+        </div>
+        <div class="card-scroll" id="wo-sessions"></div>
+      </article>
+      <article class="card acc-intensity wo-detail">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="zap"></span></span>
+          <div class="grow"><h2 id="wo-title">Session</h2><div class="sub" id="wo-sub"></div></div>
+        </div>
+        <div class="wo-metrics" id="wo-metrics"></div>
+        <div class="legend" id="wo-rep-legend"></div>
+        <div class="chart-box wo-rep-chart"><canvas id="wo-rep-chart" role="img" aria-label="Average heart rate of each rep"></canvas></div>
+        <div class="card-scroll wo-reps" id="wo-reps"></div>
+      </article>
+    </section>
+
+    <!-- ===== Form: running dynamics at matched paces ===== -->
+    <section class="panel view-form" data-panel="form" role="tabpanel" hidden>
+      <article class="card acc-body fm-bands">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="shoe"></span></span>
+          <div class="grow"><h2>Form at matched paces</h2><div class="sub" id="fm-metric-sub"></div></div>
+          <div class="segmented" id="fm-metric" role="group" aria-label="Metric">
+            <button type="button" data-metric="cadence">Cadence</button><button type="button" data-metric="gct">Ground contact</button><button type="button" data-metric="vr">Vertical ratio</button><button type="button" data-metric="stride">Stride</button>
+          </div>
+        </div>
+        <div class="legend" id="fm-band-legend"></div>
+        <div class="chart-box"><canvas id="fm-band-chart" role="img" aria-label="Form metric by month in each pace band"></canvas></div>
+      </article>
+      <article class="card acc-body fm-curve">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="trend"></span></span>
+          <div class="grow"><h2 id="fm-curve-title">Cadence vs pace</h2><div class="sub">Your own curve: the last 90 days against the year before</div></div>
+        </div>
+        <div class="legend" id="fm-curve-legend"></div>
+        <div class="chart-box"><canvas id="fm-curve-chart" role="img" aria-label="Form metric against pace"></canvas></div>
+      </article>
+      <article class="card acc-body fm-fatigue">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="zap"></span></span>
+          <div class="grow"><h2>Form under fatigue</h2><div class="sub">Start vs end of each run, each measured against your norm for that pace</div></div>
+        </div>
+        <div class="card-scroll sticky-head" id="fm-fatigue"></div>
+      </article>
+      <article class="card acc-body fm-balance">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="gauge"></span></span>
+          <div class="grow"><h2>Left / right balance</h2><div class="sub">Share of ground contact on your left foot while running. 50% is even.</div></div>
+        </div>
+        <div class="legend" id="fm-balance-legend"></div>
+        <div class="chart-box"><canvas id="fm-balance-chart" role="img" aria-label="Left/right ground contact balance per run"></canvas></div>
+        <div class="fm-alerts" id="fm-alerts"></div>
+      </article>
+    </section>
+
+    <!-- ===== Training: charts filling the screen ===== -->
+    <section class="panel view-training" data-panel="training" role="tabpanel" hidden>
+      <article class="card acc-intensity tr-zones">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="heart"></span></span>
+          <div class="grow"><h2>Time in heart-rate zones</h2><div class="sub">Hours per week, Norwegian zones. Zones 1–2 are easy.</div></div>
+          <form class="zone-settings" id="zone-form">
+            <label>Max HR <input type="number" name="max_hr" min="140" max="230" step="1" aria-label="Max heart rate"></label>
+            <button type="submit" class="ghost">Update</button>
+          </form>
+          <div class="segmented range" role="group" aria-label="Range">
+            <button data-weeks="12">12 wk</button><button data-weeks="26">26 wk</button><button data-weeks="52">52 wk</button>
+          </div>
+        </div>
+        <div class="legend" id="zone-legend"></div>
+        <div class="muted zone-msg" id="zone-msg"></div>
+        <div class="chart-box"><canvas id="zone-chart" role="img" aria-label="Weekly hours in each heart-rate zone"></canvas></div>
+      </article>
+      <article class="card acc-body tr-ef">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="trend"></span></span>
+          <div class="grow"><h2>Aerobic efficiency</h2><div class="sub">Meters per minute per heartbeat. Rising = fitter. Heat-adjusted removes the cost of temperature + dew point.</div></div>
+          <div data-heat-slot></div>
+        </div>
+        <div class="legend" id="ef-legend"></div>
+        <div class="chart-box"><canvas id="ef-chart" role="img" aria-label="Aerobic efficiency over time"></canvas></div>
+      </article>
+      <article class="card acc-train tr-monthly">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="calendar"></span></span>
+          <div class="grow"><h2>Monthly distance</h2><div class="sub">Last 12 months</div></div>
+        </div>
+        <div class="chart-box"><canvas id="monthly-chart" role="img" aria-label="Monthly running distance"></canvas></div>
+      </article>
+    </section>
+
+    <!-- ===== Records: race log, PRs, predictions ===== -->
+    <section class="panel view-records" data-panel="records" role="tabpanel" hidden>
+      <article class="card acc-goal rc-races">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="flag"></span></span>
+          <div class="grow"><h2>Races</h2><div class="sub">Official times win over watch times. Easy races don't count toward PRs or predictions.</div></div>
+          <button type="button" class="ghost" id="race-add">+ Add race</button>
+        </div>
+        <div class="card-scroll" id="races"></div>
+      </article>
+      <article class="card acc-record rc-prs">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="award"></span></span>
+          <div class="grow"><h2>Best efforts</h2><div class="sub">Fastest segment of any run, from the GPS stream</div></div>
+        </div>
+        <div class="card-scroll"><table id="records"></table></div>
+      </article>
+      <article class="card acc-goal rc-preds">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="clock"></span></span>
+          <div class="grow"><h2>Race predictions</h2><div class="sub" id="pred-sub"></div></div>
+        </div>
+        <div class="card-scroll"><table id="predictions"></table></div>
+      </article>
+    </section>
+
+    <!-- Add / edit a race -->
+    <dialog class="sheet" id="race-dialog">
+      <form method="dialog" id="race-form" class="sheet-form">
+        <h2 id="race-form-title">Add race</h2>
+        <div class="form-grid">
+          <label>Date<input type="date" name="date" required></label>
+          <label class="wide">Race<input name="name" required maxlength="200" placeholder="Gaza 5k"></label>
+          <label>Distance
+            <select name="distance">
+              <option value="5000">5k</option><option value="10000">10k</option><option value="16093.44">10 miles</option>
+              <option value="21097.5">Half marathon</option><option value="42195">Marathon</option><option value="other">Other…</option>
+            </select>
+          </label>
+          <label data-other-distance hidden>Distance (km)<input name="distance_km" type="number" step="any" min="0.1"></label>
+          <label>Course<input name="course" maxlength="200" placeholder="Prospect Park"></label>
+          <label>How hard
+            <select name="effort"><option value="all_out">All out</option><option value="controlled">Controlled</option><option value="easy">Easy (doesn't count)</option></select>
+          </label>
+          <label>Official time<input name="official" placeholder="22:47.88" inputmode="decimal"></label>
+          <label>Target time<input name="target" placeholder="21:30" inputmode="decimal"></label>
+          <label class="wide">Notes<input name="notes" maxlength="2000"></label>
+        </div>
+        <p class="sub" id="race-form-hint">Leave the official time empty to use your watch time. Races are matched to the Garmin activity on the same day.</p>
+        <div class="sheet-actions">
+          <button type="button" class="ghost danger" id="race-delete" hidden>Delete</button>
+          <span class="grow"></span>
+          <button type="button" class="ghost" id="race-cancel">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Mile-split pacing card -->
+    <dialog class="sheet pacing" id="pace-dialog">
+      <div class="sheet-form">
+        <div class="pace-head">
+          <div><h2 id="pace-title">Pacing card</h2><div class="sub" id="pace-sub"></div></div>
+          <label class="pace-target">Target<input id="pace-target" placeholder="22:30" inputmode="decimal"></label>
+        </div>
+        <div id="pace-body"></div>
+        <div class="sheet-actions no-print">
+          <span class="grow"></span>
+          <button type="button" class="ghost" id="pace-close">Close</button>
+          <button type="button" class="primary" id="pace-print">Print</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ===== Activities ===== -->
+    <section class="panel view-activities" data-panel="activities" role="tabpanel" hidden>
+      <article class="card acc-train">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="list"></span></span>
+          <div class="grow"><h2>Recent activities</h2><div class="sub">Every activity is saved; runs are sorted by what they did to you</div></div>
+          <div class="legend" id="kind-legend"></div>
+        </div>
+        <div class="card-scroll sticky-head"><table id="activities"></table></div>
+      </article>
+    </section>
+  </div>
+
+  <!-- Coach: always visible on wide screens, a full-screen sheet on phones -->
+  <aside class="coach" id="coach" aria-label="Coach">
+    <div class="coach-resizer" id="coach-resizer" role="separator" aria-orientation="vertical" aria-controls="coach"
+         aria-label="Resize coach panel (drag, arrow keys, double-click to reset)" tabindex="0"></div>
+    <div class="coach-head">
+      <div class="title-row">
+        <span class="badge-icon"><span class="icon" data-icon="chat"></span></span>
+        <div>
+          <h2>Coach</h2>
+          <div class="sub">Reads your running data only</div>
+        </div>
+      </div>
+      <div class="coach-head-actions">
+        <button type="button" id="notes-toggle" aria-expanded="false" aria-controls="coach-notes">About you</button>
+        <button type="button" id="plan-toggle" title="Open the Plan view">Plan</button>
+        <button type="button" id="coach-reset" title="Start a new conversation">New</button>
+        <button type="button" id="coach-close" class="coach-close" aria-label="Close coach">✕</button>
+      </div>
+    </div>
+
+    <div class="coach-notes" id="coach-notes" hidden>
+      <p class="sub">Background the coach reads before every answer: what you're training for, your method, PRs, injuries, illness, life stuff. Keep it current.</p>
+      <textarea id="notes-text" rows="8" aria-label="Notes for the coach" placeholder="e.g. Training for a 5k PR (current 21:43) using threshold intervals. Coming back from a cold…"></textarea>
+      <div class="notes-actions"><button class="primary" type="button" id="notes-save">Save notes</button><span id="notes-saved" class="muted"></span></div>
+    </div>
+
+    <div class="coach-body" id="coach-log" aria-live="polite"></div>
+    <div class="coach-empty" id="coach-empty" hidden>
+      <p>Ask anything about your training. The coach looks at your runs, heart rate, body data, goals, plan and the notes in <b>About you</b>.</p>
+      <div id="coach-suggestions" class="suggestions">
+        <button type="button">How did my last week of training go?</button>
+        <button type="button">Am I on track for my goal?</button>
+        <button type="button">Am I running my easy runs too hard?</button>
+        <button type="button">What should I adjust in my plan?</button>
+      </div>
+    </div>
+
+    <form id="coach-form" class="coach-form">
+      <textarea name="message" rows="2" placeholder="Ask your coach…" aria-label="Message to coach" required></textarea>
+      <button class="primary" type="submit">Send</button>
+    </form>
+  </aside>
+</div>
+
+<button type="button" class="coach-fab" id="coach-open" aria-controls="coach"><span class="icon" data-icon="chat"></span>Ask coach</button>
+
+<script defer src="/static/app.js"></script>
+</body>
+</html>

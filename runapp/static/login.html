@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Running Log</title>
+  <meta name="theme-color" content="#121720">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Running Log">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+    .login .card { width: 100%; max-width: 360px; padding: 28px 24px; }
+    .login .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .login form { display: flex; flex-direction: column; gap: 10px; }
+    .login input { font-size: 16px; padding: 10px 12px; }
+    .login button { padding: 10px; font-size: 15px; }
+    .login .error { color: var(--critical-text); font-size: 13px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <main class="login">
+    <div class="card">
+      <div class="brand">
+        <img class="brand-mark" src="/static/icons/icon-192.png" alt="" width="48" height="48">
+        <h1>Running log</h1>
+      </div>
+      <form id="login-form">
+        <input type="password" name="password" placeholder="Password" autocomplete="current-password" aria-label="Password" required autofocus>
+        <button class="primary" type="submit">Log in</button>
+        <div class="error" id="error" role="alert"></div>
+      </form>
+    </div>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

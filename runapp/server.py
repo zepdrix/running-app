@@ -1,0 +1,428 @@
+"""Local web dashboard: JSON API + a single static page."""
+
+import asyncio
+import threading
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from . import analysis, auth, coach, config, db, form, plan, races, status, sync, workouts, zones
+
+STATIC = Path(__file__).parent / "static"
+
+app = FastAPI(title="Running app")
+# The data and app code are text that shrinks 4-7x, which matters on a phone connection.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+# Reachable without logging in: the login page and what it (and the home-screen icon) needs.
+PUBLIC_PATHS = {"/login", "/api/login", "/manifest.webmanifest", "/sw.js", "/static/style.css", "/static/login.js"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if not auth.enabled() or path in PUBLIC_PATHS or path.startswith("/static/icons/"):
+        return await call_next(request)
+    conn = db.connect()
+    try:
+        ok = auth.valid_session(conn, request.cookies.get(auth.COOKIE))
+    finally:
+        conn.close()
+    if ok:
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Log in first"}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(STATIC / "login.html")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from the root so it can control the whole app; never cached so updates land right away.
+    return FileResponse(
+        STATIC / "sw.js",
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+class LoginIn(BaseModel):
+    password: str = Field(max_length=200)
+
+
+@app.post("/api/login")
+async def login(body: LoginIn, request: Request):
+    if not auth.enabled():
+        return {"ok": True}
+    if not auth.check_password(body.password):
+        await asyncio.sleep(1)  # slow down guessing
+        raise HTTPException(401, "Wrong password")
+    conn = db.connect()
+    try:
+        token = auth.new_session(conn)
+    finally:
+        conn.close()
+    res = JSONResponse({"ok": True})
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    res.set_cookie(auth.COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax", secure=https)
+    return res
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    conn = db.connect()
+    try:
+        auth.end_session(conn, request.cookies.get(auth.COOKIE))
+    finally:
+        conn.close()
+    res = JSONResponse({"ok": True})
+    res.delete_cookie(auth.COOKIE)
+    return res
+
+
+_sync_state = {"running": False, "message": None}
+_sync_lock = threading.Lock()
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/dashboard")
+def dashboard(weeks: int = 26):
+    conn = db.connect()
+    try:
+        return {
+            "demo": config.DEMO,
+            "auth": auth.enabled(),
+            "overview": analysis.overview(conn),
+            "weekly": analysis.weekly(conn, weeks),
+            "monthly": analysis.monthly(conn, 12),
+            "efficiency": analysis.efficiency(conn),
+            "records": analysis.personal_records(conn),
+            "predictions": analysis.predictions(conn),
+            "goals": analysis.goal_progress(conn),
+            "activities": analysis.recent_activities(conn),
+        }
+    finally:
+        conn.close()
+
+
+class GoalIn(BaseModel):
+    kind: str = Field(pattern="^(race|weekly_distance|monthly_distance|easy_hr_share)$")
+    label: str | None = None
+    distance_m: float | None = None
+    target: float = Field(gt=0)
+    target_date: str | None = None
+
+
+@app.post("/api/goals")
+def add_goal(goal: GoalIn):
+    if goal.kind == "race" and not goal.distance_m:
+        raise HTTPException(400, "Race goals need a distance")
+    conn = db.connect()
+    try:
+        conn.execute(
+            "INSERT INTO goals (kind, label, distance_m, target, target_date) VALUES (?, ?, ?, ?, ?)",
+            (goal.kind, goal.label, goal.distance_m, goal.target, goal.target_date or None),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/goals/{goal_id}")
+def delete_goal(goal_id: int):
+    conn = db.connect()
+    try:
+        conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+def _sync_worker(full: bool):
+    def progress(msg):
+        _sync_state["message"] = msg
+
+    conn = db.connect()
+    try:
+        client = sync.login(interactive=False)
+        sync.run_sync(conn, client, full=full, progress=progress)
+    except sync.NotLoggedIn as e:
+        _sync_state["message"] = str(e)
+    except Exception as e:
+        _sync_state["message"] = f"Sync failed: {e}"
+    finally:
+        conn.close()
+        _sync_state["running"] = False
+
+
+@app.post("/api/sync")
+def start_sync(full: bool = False):
+    if config.DEMO:
+        return {"running": False, "message": "Syncing is disabled while viewing demo data."}
+    with _sync_lock:
+        if _sync_state["running"]:
+            return _sync_state
+        _sync_state.update(running=True, message="Starting sync…")
+        threading.Thread(target=_sync_worker, args=(full,), daemon=True).start()
+    return _sync_state
+
+
+@app.get("/api/sync")
+def sync_status():
+    return _sync_state
+
+
+class CoachIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    units: str = "km"
+
+
+@app.get("/api/coach")
+def coach_history():
+    conn = db.connect()
+    try:
+        return {"messages": coach.history(conn)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/coach")
+def coach_ask(body: CoachIn):
+    conn = db.connect()
+    try:
+        return coach.ask(conn, body.message.strip(), body.units)
+    except coach.CoachError as e:
+        raise HTTPException(503, str(e)) from e
+    finally:
+        conn.close()
+
+
+@app.delete("/api/coach")
+def coach_reset():
+    conn = db.connect()
+    try:
+        coach.reset(conn)
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+class NotesIn(BaseModel):
+    notes: str = Field(max_length=8000)
+
+
+@app.get("/api/coach/notes")
+def coach_notes():
+    conn = db.connect()
+    try:
+        return {"notes": coach.get_notes(conn)}
+    finally:
+        conn.close()
+
+
+@app.put("/api/coach/notes")
+def save_coach_notes(body: NotesIn):
+    conn = db.connect()
+    try:
+        coach.set_notes(conn, body.notes)
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+class SessionIn(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    kind: str = Field(pattern="^(easy|long|threshold|intervals|race|rest|cross)$")
+    title: str = Field(max_length=300)
+    details: str = Field(default="", max_length=2000)
+
+
+class PlanIn(BaseModel):
+    notes: str = Field(default="", max_length=20000)
+    sessions: list[SessionIn] = Field(max_length=500)
+
+
+@app.get("/api/plan")
+def get_plan():
+    conn = db.connect()
+    try:
+        return plan.with_actuals(conn)
+    finally:
+        conn.close()
+
+
+@app.put("/api/plan")
+def save_plan(body: PlanIn):
+    conn = db.connect()
+    try:
+        plan.save(conn, body.notes, [s.model_dump() for s in body.sessions])
+        return plan.with_actuals(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/status")
+def get_status():
+    conn = db.connect()
+    try:
+        return status.latest(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/status")
+def refresh_status(units: str = "km", sync_first: bool = True):
+    # Pull the latest from Garmin first so "last 12 hours" is current, unless a sync is already running.
+    if sync_first and not config.DEMO:
+        with _sync_lock:
+            start = not _sync_state["running"]
+            if start:
+                _sync_state.update(running=True, message="Syncing for status…")
+        if start:
+            _sync_worker(False)
+    conn = db.connect()
+    try:
+        status.generate(conn, units)
+        return status.latest(conn)
+    except status.StatusError as e:
+        raise HTTPException(503, str(e)) from e
+    finally:
+        conn.close()
+
+
+class ZonesIn(BaseModel):
+    max_hr: int = Field(ge=140, le=230)
+
+
+@app.put("/api/zones")
+def save_zones(body: ZonesIn):
+    conn = db.connect()
+    try:
+        zones.set_max_hr(conn, body.max_hr)
+        return zones.describe(conn)
+    finally:
+        conn.close()
+
+
+# ---------- race log ----------
+class RaceIn(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    name: str = Field(min_length=1, max_length=200)
+    distance_m: float = Field(gt=0, le=200000)
+    course: str | None = Field(default=None, max_length=200)
+    official_time_s: float | None = Field(default=None, gt=0)
+    target_time_s: float | None = Field(default=None, gt=0)
+    effort: str = Field(default="all_out", pattern="^(all_out|controlled|easy)$")
+    activity_id: int | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+@app.get("/api/races")
+def list_races():
+    conn = db.connect()
+    try:
+        return races.all_races(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/races")
+def add_race(body: RaceIn):
+    conn = db.connect()
+    try:
+        races.save(conn, body.model_dump())
+        return races.all_races(conn)
+    finally:
+        conn.close()
+
+
+@app.put("/api/races/{race_id}")
+def update_race(race_id: int, body: RaceIn):
+    conn = db.connect()
+    try:
+        races.save(conn, body.model_dump(), race_id)
+        return races.all_races(conn)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/races/{race_id}")
+def remove_race(race_id: int):
+    conn = db.connect()
+    try:
+        races.delete(conn, race_id)
+        return races.all_races(conn)
+    finally:
+        conn.close()
+
+
+# ---------- threshold / interval sessions ----------
+@app.get("/api/workouts")
+def list_workouts(days: int = 365):
+    conn = db.connect()
+    try:
+        return {"sessions": workouts.sessions(conn, days), "zones": zones.describe(conn), "reference_hr": workouts.REFERENCE_HR}
+    finally:
+        conn.close()
+
+
+# ---------- coach plan proposals ----------
+@app.get("/api/plan/proposals")
+def plan_proposals():
+    conn = db.connect()
+    try:
+        return {"proposals": plan.proposals(conn)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/plan/proposals/{proposal_id}/apply")
+def apply_plan_proposal(proposal_id: int):
+    conn = db.connect()
+    try:
+        plan.apply_proposal(conn, proposal_id)
+        return plan.with_actuals(conn)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    finally:
+        conn.close()
+
+
+@app.post("/api/plan/proposals/{proposal_id}/dismiss")
+def dismiss_plan_proposal(proposal_id: int):
+    conn = db.connect()
+    try:
+        plan.dismiss_proposal(conn, proposal_id)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ---------- running form ----------
+@app.get("/api/form")
+def form_report():
+    conn = db.connect()
+    try:
+        return form.report(conn)
+    finally:
+        conn.close()

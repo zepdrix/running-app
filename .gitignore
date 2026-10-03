@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# personal data: Garmin tokens, raw activity files, database
+data/
