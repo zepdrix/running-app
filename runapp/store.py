@@ -101,4 +101,5 @@ def store_detail(
         (int(bool(samples)), activity_id),
     )
     zones.recompute(conn, [activity_id])
-    form.ensure(conn, [activity_id])
+    if run and run["is_run"]:
+        form.ensure(conn, [activity_id])

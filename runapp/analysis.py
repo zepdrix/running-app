@@ -158,6 +158,12 @@ def efficiency(conn: sqlite3.Connection, days: int = 365, today: date | None = N
     return out
 
 
+# Records and predictions count outdoor runs only: a treadmill's distance is an estimate.
+# (Indoor best efforts stay in the best_efforts table.)
+_INDOOR = sorted(weather.INDOOR_TYPES)
+_OUTDOOR_SQL = f"a.type NOT IN ({', '.join('?' * len(_INDOOR))})"
+
+
 def personal_records(conn: sqlite3.Connection, recent_days: int = 90, today: date | None = None) -> list[dict]:
     today = today or date.today()
     cutoff = (today - timedelta(days=recent_days)).isoformat()
@@ -165,11 +171,11 @@ def personal_records(conn: sqlite3.Connection, recent_days: int = 90, today: dat
     for label, dist in config.BEST_EFFORT_DISTANCES.items():
         row = {"label": label, "distance_m": dist, "all_time": None, "recent": None}
         for key, where in (("all_time", ""), ("recent", "AND a.start_local >= ?")):
-            params = [label] + ([cutoff] if where else [])
+            params = [label, *_INDOOR] + ([cutoff] if where else [])
             best = conn.execute(
                 f"""SELECT b.time_s, a.id, a.name, a.start_local FROM best_efforts b
                     JOIN activities a ON a.id = b.activity_id
-                    WHERE b.label = ? {where} ORDER BY b.time_s LIMIT 1""",
+                    WHERE b.label = ? AND {_OUTDOOR_SQL} {where} ORDER BY b.time_s LIMIT 1""",
                 params,
             ).fetchone()
             if best:
@@ -191,10 +197,10 @@ def _recent_efforts(conn: sqlite3.Connection, recent_days: int, today: date) -> 
     # Efforts under 3k overpredict long races, so they're not used for projections.
     cutoff = (today - timedelta(days=recent_days)).isoformat()
     return conn.execute(
-        """SELECT b.label, b.distance_m, MIN(b.time_s) AS time_s FROM best_efforts b
-           JOIN activities a ON a.id = b.activity_id
-           WHERE a.start_local >= ? AND b.distance_m >= 3000 GROUP BY b.label""",
-        (cutoff,),
+        f"""SELECT b.label, b.distance_m, MIN(b.time_s) AS time_s FROM best_efforts b
+            JOIN activities a ON a.id = b.activity_id
+            WHERE a.start_local >= ? AND b.distance_m >= 3000 AND {_OUTDOOR_SQL} GROUP BY b.label""",
+        (cutoff, *_INDOOR),
     ).fetchall()
 
 

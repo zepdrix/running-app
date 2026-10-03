@@ -61,6 +61,7 @@ def _token_hash(token: str) -> str:
 def new_session(conn: sqlite3.Connection) -> str:
     token = secrets.token_urlsafe(32)
     expires = (datetime.now() + timedelta(days=SESSION_DAYS)).isoformat(timespec="seconds")
+    conn.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (datetime.now().isoformat(timespec="seconds"),))
     conn.execute("INSERT INTO auth_sessions (token_hash, expires_at) VALUES (?, ?)", (_token_hash(token), expires))
     conn.commit()
     return token

@@ -2,14 +2,17 @@
 
 import asyncio
 import threading
+import time
+from datetime import date
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from . import analysis, auth, coach, config, db, form, plan, races, status, sync, workouts, zones
 
@@ -84,6 +87,21 @@ def manifest():
     return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
 
 
+def _real_date(value: str) -> str:
+    date.fromisoformat(value)  # 2026-02-30 matches the pattern but would break every page that reads it
+    return value
+
+
+IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$"), AfterValidator(_real_date)]
+
+# Wrong passwords in a row before logins are refused for a while (the app is only reachable from
+# your own devices, so this is about a stolen or shared device guessing, not the open internet).
+WRONG_PASSWORD_DELAY_S = 1
+MAX_LOGIN_FAILURES = 5
+LOGIN_LOCKOUT_S = 60
+_login = {"failures": 0, "locked_until": 0.0}
+
+
 class LoginIn(BaseModel):
     password: str = Field(max_length=200)
 
@@ -92,9 +110,16 @@ class LoginIn(BaseModel):
 async def login(body: LoginIn, request: Request):
     if not auth.enabled():
         return {"ok": True}
-    if not auth.check_password(body.password):
-        await asyncio.sleep(1)  # slow down guessing
+    if time.monotonic() < _login["locked_until"]:
+        raise HTTPException(429, "Too many wrong passwords. Wait a minute and try again.")
+    # In a thread: the hash is deliberately slow and would otherwise hold up every other request.
+    if not await asyncio.to_thread(auth.check_password, body.password):
+        _login["failures"] += 1
+        if _login["failures"] >= MAX_LOGIN_FAILURES:
+            _login.update(failures=0, locked_until=time.monotonic() + LOGIN_LOCKOUT_S)
+        await asyncio.sleep(WRONG_PASSWORD_DELAY_S)  # slow down guessing
         raise HTTPException(401, "Wrong password")
+    _login["failures"] = 0
     conn = db.connect()
     try:
         token = auth.new_session(conn)
@@ -118,6 +143,7 @@ def logout(request: Request):
     return res
 
 
+STATUS_SYNC_WAIT_S = 120
 _sync_state = {"running": False, "message": None}
 _sync_lock = threading.Lock()
 
@@ -150,9 +176,9 @@ def dashboard(weeks: int = 26):
 class GoalIn(BaseModel):
     kind: str = Field(pattern="^(race|weekly_distance|monthly_distance|easy_hr_share)$")
     label: str | None = None
-    distance_m: float | None = None
+    distance_m: float | None = Field(default=None, gt=0)
     target: float = Field(gt=0)
-    target_date: str | None = None
+    target_date: IsoDate | None = None
 
 
 @app.post("/api/goals")
@@ -283,7 +309,7 @@ def save_coach_notes(body: NotesIn):
 
 
 class SessionIn(BaseModel):
-    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    date: IsoDate
     kind: str = Field(pattern="^(easy|long|threshold|intervals|race|rest|cross)$")
     title: str = Field(max_length=300)
     details: str = Field(default="", max_length=2000)
@@ -332,7 +358,16 @@ def refresh_status(units: str = "km", sync_first: bool = True):
             if start:
                 _sync_state.update(running=True, message="Syncing for status…")
         if start:
-            sync_error = _sync_worker(False)
+            # Wait for the sync, but not forever (a long history or Garmin's rate limit can take many
+            # minutes): past the limit it carries on in the background and the status uses what's saved.
+            result = {}
+            worker = threading.Thread(target=lambda: result.update(error=_sync_worker(False)), daemon=True)
+            worker.start()
+            worker.join(STATUS_SYNC_WAIT_S)
+            sync_error = (
+                "The Garmin sync is taking a while, so this status uses the data saved so far."
+                if worker.is_alive() else result.get("error")
+            )
     conn = db.connect()
     try:
         status.generate(conn, units)
@@ -360,7 +395,7 @@ def save_zones(body: ZonesIn):
 
 # ---------- race log ----------
 class RaceIn(BaseModel):
-    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    date: IsoDate
     name: str = Field(min_length=1, max_length=200)
     distance_m: float = Field(gt=0, le=200000)
     course: str | None = Field(default=None, max_length=200)

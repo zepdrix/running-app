@@ -29,6 +29,8 @@ def run(conn: sqlite3.Connection, progress=print) -> int:
         except Exception as e:
             log.warning("Skipping %s: %s", activity_id, e)
             continue
+        if not samples:
+            continue  # nothing usable in the file: keep what the sync saved from Garmin's chart data
         store.store_detail(conn, activity_id, samples, laps)
         done += 1
         if n % 50 == 0:

@@ -148,3 +148,96 @@ def test_coach_message_goes_in_on_stdin_and_keeps_its_conversation(conn, monkeyp
     monkeypatch.setattr(coach, "_run", gone)
     assert coach.ask(conn, "hi") == {"reply": "hello"}
     assert calls == ["old", None]
+
+
+def test_treadmill_efforts_are_not_records_or_predictions(conn):
+    add_run(conn, 1, "2026-09-01 07:00:00", 10.2, pace=300)
+    add_run(conn, 2, "2026-09-02 07:00:00", 10.2, pace=240, type_key="treadmill_running")  # "faster", on the belt
+    records = {r["label"]: r for r in analysis.personal_records(conn, today=date(2026, 10, 2))}
+    assert records["10k"]["all_time"]["activity_id"] == 1 and records["10k"]["recent"]["activity_id"] == 1
+    p10k = analysis.predictions(conn, today=date(2026, 10, 2))[1]
+    assert p10k["riegel"]["time_s"] == pytest.approx(3000, rel=0.01)
+    assert conn.execute("SELECT COUNT(*) FROM best_efforts WHERE activity_id = 2").fetchone()[0] > 0  # still saved
+
+
+def test_cross_training_day_counts_as_done(conn):
+    from runapp import plan
+
+    add_run(conn, 1, "2026-10-03 08:00:00", 20, type_key="cycling")
+    plan.save(conn, "", [{"date": "2026-10-03", "kind": "cross", "title": "Easy ride"},
+                         {"date": "2026-10-04", "kind": "cross", "title": "Swim"}])
+    p = plan.with_actuals(conn, today=date(2026, 10, 5))
+    assert [s["state"] for s in p["sessions"]] == ["done", "missed"]
+
+
+def test_impossible_dates_and_distances_are_refused(client):
+    race = {"date": "2026-02-30", "name": "Never", "distance_m": 5000}
+    assert client.post("/api/races", json=race).status_code == 422
+    assert client.post("/api/races", json={**race, "date": "2026-02-28"}).status_code == 200
+    assert client.put("/api/plan", json={"sessions": [{"date": "2026-13-01", "kind": "easy", "title": "x"}]}).status_code == 422
+    goal = {"kind": "race", "target": 1260, "distance_m": 5000}
+    assert client.post("/api/goals", json={**goal, "target_date": "next spring"}).status_code == 422
+    assert client.post("/api/goals", json={**goal, "distance_m": -5000}).status_code == 422
+    assert client.post("/api/goals", json={**goal, "target_date": "2027-01-16"}).status_code == 200
+    assert client.get("/api/dashboard").status_code == 200
+
+
+def test_weather_sync_gives_up_when_garmin_keeps_failing(conn):
+    from runapp import weather
+
+    for i in range(1, 7):
+        add_run(conn, i, f"2026-09-0{i} 07:00:00", 5)
+
+    class Down:
+        calls = 0
+
+        def get_activity_weather(self, activity_id):
+            self.calls += 1
+            raise RuntimeError("429")
+
+    client = Down()
+    weather.sync_weather(client, conn, pause_s=0)
+    assert client.calls == 3  # not all six: the rest wait for the next sync
+    assert conn.execute("SELECT COUNT(*) FROM activity_weather").fetchone()[0] == 0  # and nothing is written off
+
+
+def test_coach_queries_are_bounded(conn, tmp_path, monkeypatch):
+    from runapp import query
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
+    add_run(conn, 1, "2026-09-01 07:00:00", 5)
+    conn.commit()
+    assert query.run("SELECT id FROM activities") == '[{"id": 1}]'
+    monkeypatch.setattr(query, "MAX_CHARS", 50)
+    assert query.run("SELECT raw_json FROM activities").startswith("Result too large")
+    monkeypatch.setattr(query, "TIMEOUT_S", 0.05)
+    slow = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000000) SELECT COUNT(*) FROM n"
+    assert "ran for more than" in query.run(slow)
+
+
+def test_login_locks_after_repeated_wrong_passwords(client, tmp_path, monkeypatch):
+    from runapp import auth, db, server
+
+    monkeypatch.setattr(server, "WRONG_PASSWORD_DELAY_S", 0)
+    monkeypatch.setattr(server, "_login", {"failures": 0, "locked_until": 0.0})
+    c = db.connect(tmp_path / "api.db")
+    auth.set_password(c, "correct horse")
+    c.execute("INSERT INTO auth_sessions VALUES ('stale', '2020-01-01T00:00:00')")
+    c.commit()
+    for _ in range(server.MAX_LOGIN_FAILURES):
+        assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
+    assert client.post("/api/login", json={"password": "correct horse"}).status_code == 429  # locked, even when right
+    server._login["locked_until"] = 0.0
+    assert client.post("/api/login", json={"password": "correct horse"}).status_code == 200
+    assert [r[0] for r in c.execute("SELECT COUNT(*) FROM auth_sessions")] == [1]  # the expired session was cleared out
+
+
+def test_race_run_today_counts_once_its_result_is_in(conn):
+    from runapp import races
+
+    races.save(conn, {"date": "2026-10-11", "name": "Park 5k", "distance_m": 5000, "effort": "all_out"})
+    assert [r["name"] for r in races.all_races(conn, today=date(2026, 10, 11))["upcoming"]] == ["Park 5k"]
+    add_run(conn, 1, "2026-10-11 09:00:00", 5.05, pace=260)
+    races.link_activities(conn, date(2026, 10, 11))
+    d = races.all_races(conn, today=date(2026, 10, 11))
+    assert d["upcoming"] == [] and d["past"][0]["is_pr"]

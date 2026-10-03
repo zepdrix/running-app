@@ -1026,6 +1026,8 @@ async function refreshStatus(syncFirst = true) {
       if (syncFirst) await load();
       // The status was still written, from the data already saved; say why it may be out of date.
       if (body.sync_error) setSyncStatus(body.sync_error);
+      // A sync that outlasted the wait is still going: follow it; the status refreshes again when it ends.
+      if (syncFirst && !syncPolling) getJSON("/api/sync").then((s) => s.running && pollSync()).catch(() => {});
     } else {
       statusTime.textContent = body.detail || "Couldn't update the status.";
     }

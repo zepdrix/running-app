@@ -70,13 +70,17 @@ def sync_weather(client, conn: sqlite3.Connection, pause_s: float = 0.25, progre
         )
         if is_outdoor(r["type"])
     ]
+    failures = 0
     for n, activity_id in enumerate(todo, 1):
         try:
             _store(conn, activity_id, client.get_activity_weather(activity_id))
+            conn.commit()  # each one, so the database isn't locked while waiting on Garmin
+            failures = 0
         except Exception as e:
             log.warning("No weather for %s: %s", activity_id, e)
-            continue
-        conn.commit()  # each one, so the database isn't locked while waiting on Garmin
+            failures += 1
+            if failures >= 3:  # Garmin is down or rate-limiting: leave the rest for the next sync
+                break
         if n % 25 == 0 and progress:
             progress(f"Fetching weather {n}/{len(todo)}")
         time.sleep(pause_s)

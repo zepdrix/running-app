@@ -48,8 +48,10 @@ def all_races(conn: sqlite3.Connection, today: date | None = None) -> dict:
         cost = r["weather"]["heat_cost_pct"] if r["weather"] else None
         r["adjusted_time_s"] = r["time_s"] / (1 + cost / 100) if r["time_s"] and cost else r["time_s"]
 
-    past = [r for r in rows if r["date"] < today]
-    upcoming = [r for r in rows if r["date"] >= today]
+    # A race dated today is upcoming until its result is in.
+    is_past = lambda r: r["date"] < today or (r["date"] == today and r["time_s"])  # noqa: E731
+    past = [r for r in rows if is_past(r)]
+    upcoming = [r for r in rows if not is_past(r)]
 
     # PR flags: best all-out result per distance, and per course + distance.
     def best_by(key):

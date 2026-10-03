@@ -75,8 +75,8 @@ def with_actuals(conn: sqlite3.Connection, today: date | None = None) -> dict:
             s["state"] = "upcoming"
         elif s["kind"] == "rest":
             s["state"] = "rested" if not runs else "ran"
-        elif runs:
-            hardest = max(INTENSITY[a["kind"]] for a in runs)
+        elif runs or (s["kind"] == "cross" and done):  # any activity completes a cross-training day
+            hardest = max((INTENSITY[a["kind"]] for a in runs), default=INTENSITY["cross"])
             s["state"] = "harder" if hardest > INTENSITY[s["kind"]] + 1 else "done"
         else:
             s["state"] = "today" if s["date"] == today.isoformat() else "missed"

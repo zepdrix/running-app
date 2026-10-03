@@ -16,7 +16,7 @@ import sqlite3
 from datetime import date, timedelta
 from statistics import median
 
-from . import analysis
+from . import analysis, weather
 
 VERSION = 1
 MILE = 1609.344
@@ -190,7 +190,7 @@ def report(conn: sqlite3.Connection, today: date | None = None) -> dict:
     today = today or date.today()
     ensure(conn)
     stats = _stats(conn, (today - timedelta(days=550)).isoformat())
-    outdoor = [(r, s) for r, s in stats if s["has_dynamics"] and "treadmill" not in (r["type"] or "") and "indoor" not in (r["type"] or "")]
+    outdoor = [(r, s) for r, s in stats if s["has_dynamics"] and weather.is_outdoor(r["type"])]
 
     # 1. form at matched paces, by month
     months: dict[str, dict[str, list]] = {}
