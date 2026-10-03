@@ -2,5 +2,4 @@ garminconnect>=0.3.2
 fitdecode>=0.11
 fastapi>=0.110
 uvicorn[standard]>=0.29
-pytest>=8
 mcp>=2.3

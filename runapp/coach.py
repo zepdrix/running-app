@@ -77,23 +77,6 @@ class CoachTimeout(CoachError):
     pass
 
 
-def _ensure_tables(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS coach_messages (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            role        TEXT NOT NULL,      -- user | coach
-            content     TEXT NOT NULL,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS coach_state (
-            key   TEXT PRIMARY KEY,
-            value TEXT
-        );
-        """
-    )
-
-
 def _claude_bin() -> str:
     found = shutil.which("claude") or str(Path.home() / ".local/bin/claude")
     if not Path(found).exists():
@@ -102,18 +85,15 @@ def _claude_bin() -> str:
 
 
 def history(conn: sqlite3.Connection) -> list[dict]:
-    _ensure_tables(conn)
     return [dict(r) for r in conn.execute("SELECT id, role, content, created_at FROM coach_messages ORDER BY id")]
 
 
 def _get_state(conn: sqlite3.Connection, key: str) -> str:
-    _ensure_tables(conn)
     row = conn.execute("SELECT value FROM coach_state WHERE key = ?", (key,)).fetchone()
     return row["value"] if row and row["value"] else ""
 
 
 def _set_state(conn: sqlite3.Connection, key: str, value: str) -> None:
-    _ensure_tables(conn)
     conn.execute("INSERT OR REPLACE INTO coach_state VALUES (?, ?)", (key, value.strip()))
     conn.commit()
 
@@ -131,7 +111,6 @@ def get_plan(conn: sqlite3.Connection) -> str:
 
 
 def reset(conn: sqlite3.Connection) -> None:
-    _ensure_tables(conn)
     conn.execute("DELETE FROM coach_messages")
     conn.execute("DELETE FROM coach_state WHERE key = 'session_id'")
     conn.commit()
@@ -198,7 +177,6 @@ def _run(message: str, session_id: str | None, units: str, notes: str, plan_text
 
 
 def ask(conn: sqlite3.Connection, message: str, units: str = "km") -> dict:
-    _ensure_tables(conn)
     if not _lock.acquire(blocking=False):
         raise CoachError("The coach is still answering your previous message.")
     try:

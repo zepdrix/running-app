@@ -49,9 +49,10 @@ def training_snapshot() -> str:
 
 @server.tool()
 def query_sql(sql: str) -> str:
-    """Run one read-only SQLite SELECT against the database (max 200 rows returned).
-    Tables: activities, samples, laps, best_efforts, goals, snapshots. Aggregate the
-    samples table rather than selecting it raw; it has a row every second or so."""
+    """Run one read-only SQLite SELECT against the database (max 200 rows, 60,000 characters
+    and 10 seconds). The tables are listed in your instructions. Aggregate the samples table
+    rather than selecting it raw (it has a row every second or so), and leave out raw_json
+    columns unless you need them."""
     return query.run(sql)
 
 

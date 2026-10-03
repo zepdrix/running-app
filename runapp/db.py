@@ -121,6 +121,14 @@ CREATE TABLE IF NOT EXISTS coach_state (
     value TEXT
 );
 
+-- The conversation with the coach, as shown in the Coach panel.
+CREATE TABLE IF NOT EXISTS coach_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    role        TEXT NOT NULL,      -- user | coach
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Logged-in devices (only used when a password is set; see auth.py).
 CREATE TABLE IF NOT EXISTS auth_sessions (
     token_hash  TEXT PRIMARY KEY,
