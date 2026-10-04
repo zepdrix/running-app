@@ -365,7 +365,7 @@ def test_password_protection(tmp_path, monkeypatch):
     assert client.get("/api/dashboard").status_code == 401
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
-    for public in ("/login", "/manifest.webmanifest", "/static/style.css", "/static/login.js", "/static/icons/icon-192.png"):
+    for public in ("/login", "/manifest.webmanifest", "/static/style.css", "/static/login.js", "/static/theme.js", "/static/icons/icon-192.png"):
         assert client.get(public, follow_redirects=False).status_code == 200, public
     assert client.get("/static/app.js", follow_redirects=False).status_code == 303  # the app stays behind the login
 

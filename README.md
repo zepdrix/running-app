@@ -46,7 +46,7 @@ The app is designed for the phone first; on a computer the same pages sit side b
   on a phone a session opens as its own page) and **Form**.
 - **History**: **Activities** and **Races & records**.
 
-The ↻ button syncs Garmin; the sliders button holds the settings (km or miles, install, log out).
+The ↻ button syncs Garmin; the sliders button holds the settings (km or miles, light or dark appearance, install, log out).
 
 ## Use it on your phone (Tailscale)
 

@@ -38,7 +38,7 @@ class AppFiles(StaticFiles):
 app.mount("/static", AppFiles(directory=STATIC), name="static")
 
 # Reachable without logging in: the login page and what it (and the home-screen icon) needs.
-PUBLIC_PATHS = {"/login", "/api/login", "/manifest.webmanifest", "/sw.js", "/static/style.css", "/static/login.js"}
+PUBLIC_PATHS = {"/login", "/api/login", "/manifest.webmanifest", "/sw.js", "/static/style.css", "/static/login.js", "/static/theme.js"}
 
 
 def _cross_site(request: Request) -> bool:

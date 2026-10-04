@@ -231,7 +231,20 @@ document.getElementById("subnav").addEventListener("click", (e) => {
 });
 showTab(state.tab);
 
-// Settings (units, install, log out): inline in the header on wide screens, a sheet on phones.
+// Appearance: Auto follows the device; Light and Dark override it (theme.js applies it before the page paints).
+function markTheme() {
+  document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === window.appTheme.get())));
+}
+document.getElementById("theme").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-theme-choice]");
+  if (!b) return;
+  window.appTheme.set(b.dataset.themeChoice);
+  markTheme();
+  if (state.data) render(); // charts take their colors from the theme, so draw them again
+});
+markTheme();
+
+// Settings (units, appearance, install, log out): inline in the header on wide screens, a sheet on phones.
 const appMenu = document.getElementById("app-menu");
 const menuBtn = document.getElementById("menu-btn");
 const menuBackdrop = document.getElementById("menu-backdrop");

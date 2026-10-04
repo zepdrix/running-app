@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Running Log</title>
   <meta name="theme-color" content="#121720">
+  <script src="/static/theme.js"></script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -56,6 +57,11 @@
             </div>
           </div>
           <p class="menu-note">Paces are always per mile.</p>
+          <div class="menu-row"><span class="menu-label">Appearance</span>
+            <div class="segmented" id="theme" role="group" aria-label="Appearance">
+              <button type="button" data-theme-choice="auto" title="Follow this device">Auto</button><button type="button" data-theme-choice="light">Light</button><button type="button" data-theme-choice="dark">Dark</button>
+            </div>
+          </div>
           <button type="button" id="install-btn" hidden>Install app</button>
           <button type="button" id="logout-btn" hidden>Log out</button>
           <button type="button" class="primary menu-done" id="menu-done">Done</button>

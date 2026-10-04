@@ -242,7 +242,9 @@ textarea:focus, input:focus, select:focus { outline: 2px solid color-mix(in srgb
   .coach-form { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
 }
 
-.topbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+/* Title on the left; controls on the right with the sync note under them. */
+.topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; }
+.topbar-title { grid-column: 1; grid-row: 1 / 3; }
 .topbar h1 { font-size: 22px; }
 .topbar .sub { margin: 2px 0 0; }
 .brand-mark {
@@ -258,9 +260,9 @@ img.brand-mark {
 }
 .topbar-title { display: flex; align-items: center; gap: 12px; }
 img.brand-mobile { display: none; width: 40px; height: 40px; border-radius: 10px; }
-.topbar-right { display: flex; gap: 8px; align-items: center; }
+.topbar-right { display: flex; gap: 8px; align-items: center; grid-column: 2; grid-row: 1; justify-self: end; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
-#sync-status { color: var(--muted); font-size: 12px; max-width: 360px; margin-left: auto; }
+#sync-status { color: var(--muted); font-size: 12px; max-width: 420px; grid-column: 2; grid-row: 2; justify-self: end; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Settings are inline up here on wide screens; the sheet parts only exist on phones. */
 #menu-btn, .menu-title, .menu-label, .menu-note, .menu-done { display: none; }
 .menu-row { display: flex; align-items: center; gap: 10px; }
@@ -820,7 +822,7 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
   img.brand-mobile { width: 36px; height: 36px; border-radius: 10px; }
   #data-range { display: none; }
   .topbar-right { grid-column: 2; grid-row: 1; }
-  #sync-status { grid-column: 1 / -1; grid-row: 2; margin: 0; max-width: none; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #sync-status { grid-column: 1 / -1; grid-row: 2; justify-self: start; max-width: 100%; font-size: 11.5px; }
   #sync-btn, #menu-btn { width: 42px; height: 42px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; }
   #sync-btn { font-size: 0; }
   #sync-btn::before { content: "↻"; font-size: 21px; line-height: 1; }
@@ -838,7 +840,7 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
   .menu-note { display: block; margin: -8px 0 0; font-size: 12px; color: var(--muted); }
   .menu-done { display: block; }
   .header-actions > button { min-height: 46px; border-radius: 12px; font-size: 15px; }
-  .header-actions #units button { padding: 9px 20px; font-size: 15px; }
+  .header-actions .segmented button { padding: 9px 18px; font-size: 15px; }
 
   /* pages in a section: full-width tabs that stay in reach while you scroll */
   .subnav, .part-tabs {
