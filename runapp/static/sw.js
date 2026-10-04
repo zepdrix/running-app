@@ -8,7 +8,7 @@
  * - Libraries (static/vendor) and fonts: cache first (their URLs are versioned).
  * - Anything that isn't a GET (coach messages, saves, sync, login) is never cached.
  */
-const VERSION = "v6"; // bump to drop old cached files (e.g. the old icon)
+const VERSION = "v7"; // bump to drop old cached files (e.g. the old icon)
 const SHELL = `runapp-shell-${VERSION}`;
 const DATA = `runapp-data-${VERSION}`;
 const LIBS = `runapp-libs-${VERSION}`;

@@ -97,6 +97,7 @@ const ICONS = {
   wind: '<path d="M9.6 4.6A2 2 0 1 1 11 8H2M12.6 19.4A2 2 0 1 0 14 16H2M17.5 8a2.5 2.5 0 1 1 2 4H2"/>',
   shoe: '<path d="M3 17h17a2 2 0 0 0 2-2v-.5a2.5 2.5 0 0 0-2-2.45L15 11l-3-4H9v2H6V6H3z"/><path d="M3 17v2h19v-2M11.5 9l-1.5 1.5M13.5 11.5 12 13"/>',
   dumbbell: '<path d="M6.5 6.5v11M3.5 9.5v5M17.5 6.5v11M20.5 9.5v5M6.5 12h11"/>',
+  sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
   leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z"/><path d="M2 21c0-3 1.9-5.4 5.2-6"/>',
 };
 const icon = (name) =>
@@ -184,17 +185,65 @@ function renderCharts() {
   if (state.tab === "records") loadRaces();
 }
 
+// Five sections (the tab bar). A section with more than one page gets tabs under the header;
+// state.tab is always the page being shown.
+const SECTIONS = {
+  today: { label: "Today", views: ["overview"] },
+  plan: { label: "Plan", views: ["plan"] },
+  progress: { label: "Progress", views: ["training", "workouts", "form"] },
+  history: { label: "History", views: ["activities", "records"] },
+};
+const VIEW_LABELS = { training: "Training", workouts: "Workouts", form: "Form", activities: "Activities", records: "Races & records" };
+const sectionOf = (view) => Object.keys(SECTIONS).find((k) => SECTIONS[k].views.includes(view));
+const lastView = {}; // the page each section was left on
+const markSection = (section) =>
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.section === section));
+
 function showTab(tab) {
+  const changed = state.tab !== tab;
   state.tab = tab;
+  const section = sectionOf(tab);
+  lastView[section] = tab;
   try { localStorage.setItem("tab", tab); } catch {}
   history.replaceState(null, "", `#${tab}`);
-  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === tab));
+  markSection(section);
   document.querySelectorAll(".panel").forEach((p) => (p.hidden = p.dataset.panel !== tab));
-  document.getElementById("view-title").textContent = { overview: "Today", plan: "Plan", workouts: "Workouts", form: "Form", training: "Training", records: "Records", activities: "Activities" }[tab];
+  document.getElementById("view-title").textContent = SECTIONS[section].label;
+  const views = SECTIONS[section].views;
+  const subnav = document.getElementById("subnav");
+  subnav.hidden = views.length < 2;
+  subnav.innerHTML = views.length < 2 ? "" : views
+    .map((v) => `<button type="button" role="tab" data-view="${v}" aria-selected="${v === tab}">${VIEW_LABELS[v]}</button>`)
+    .join("");
+  if (changed) window.scrollTo(0, 0); // a new page starts at its top
   renderCharts();
 }
-document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+document.querySelector(".tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-section]");
+  if (!b) return;
+  if (b.dataset.section === "coach") return setCoachOpen(true); // the coach lies over the page you were on
+  if (coachPanel.classList.contains("open")) setCoachOpen(false);
+  showTab(lastView[b.dataset.section] || SECTIONS[b.dataset.section].views[0]);
+});
+document.getElementById("subnav").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-view]");
+  if (b) showTab(b.dataset.view);
+});
 showTab(state.tab);
+
+// Settings (units, install, log out): inline in the header on wide screens, a sheet on phones.
+const appMenu = document.getElementById("app-menu");
+const menuBtn = document.getElementById("menu-btn");
+const menuBackdrop = document.getElementById("menu-backdrop");
+function setMenuOpen(open) {
+  appMenu.classList.toggle("open", open);
+  menuBackdrop.hidden = !open;
+  menuBtn.setAttribute("aria-expanded", String(open));
+}
+menuBtn.addEventListener("click", () => setMenuOpen(!appMenu.classList.contains("open")));
+menuBackdrop.addEventListener("click", () => setMenuOpen(false));
+document.getElementById("menu-done").addEventListener("click", () => setMenuOpen(false));
+document.addEventListener("keydown", (e) => e.key === "Escape" && appMenu.classList.contains("open") && setMenuOpen(false));
 
 // ---------- tiles ----------
 function renderTiles(o) {
@@ -212,8 +261,8 @@ function renderTiles(o) {
   const tiles = [
     { acc: "acc-train", icon: "route", label: "This week", value: `${fmtDist(o.this_week_m)}<small>${unitLabel()}</small>`,
       delta: `${weekPill}<span>4-wk avg ${fmtDist(o.prev_4wk_avg_m)}</span>` },
-    { acc: "acc-intensity", icon: "gauge", label: "Acute : chronic load", value: ratio == null ? "–" : ratio.toFixed(2),
-      delta: `<span class="pill ${load.cls}">${load.text}</span><span>7 days vs 4-wk avg</span>` },
+    { acc: "acc-intensity", icon: "gauge", label: "Training load", value: ratio == null ? "–" : `${ratio.toFixed(2)}<small>×</small>`,
+      delta: `<span class="pill ${load.cls}">${load.text}</span><span>last 7 days vs your usual week</span>` },
     { acc: "acc-body", icon: "leaf", label: "Easy running · 28 days", value: easy == null ? "–" : `${Math.round(easy * 100)}<small>%</small>`,
       delta: `${easyPill}<span>time in zones 1–2 (under ${o.hr_zones.bounds[2]} bpm)</span>` },
     { acc: "acc-goal", icon: "wind", label: "VO₂ max", value: o.vo2max ? o.vo2max.vo2max.toFixed(1) : "–",
@@ -753,11 +802,10 @@ loadNotes();
 
 // ---------- coach on narrow screens ----------
 const coachPanel = document.getElementById("coach");
-const coachOpen = document.getElementById("coach-open");
 function setCoachOpen(open) {
   coachPanel.classList.toggle("open", open);
   document.documentElement.classList.toggle("coach-open", open); // stops the page behind from scrolling
-  coachOpen.hidden = open;
+  markSection(open ? "coach" : sectionOf(state.tab));
   fitCoach();
   if (open) {
     coachLog.scrollTop = coachLog.scrollHeight;
@@ -765,12 +813,7 @@ function setCoachOpen(open) {
     if (!matchMedia("(pointer: coarse)").matches) coachForm.message.focus();
   }
 }
-coachOpen.addEventListener("click", () => setCoachOpen(true));
 document.getElementById("coach-close").addEventListener("click", () => setCoachOpen(false));
-// The tab bar stays visible under the coach: tapping any tab also leaves the coach.
-document.querySelector(".tabs").addEventListener("click", (e) => {
-  if (e.target.closest("button[data-tab]") && coachPanel.classList.contains("open")) setCoachOpen(false);
-});
 
 // The coach sheet ends where the tab bar begins.
 const rail = document.querySelector(".rail");
@@ -853,13 +896,13 @@ function exerciseList(s) {
 }
 
 // Strength is ticked off by hand (or by a strength activity recorded on the watch).
-function strengthActual(s) {
+function strengthActual(s, pill = true) {
   if (s.state === "upcoming") return "";
   const acts = (s.actual || []).map((a) => `<div class="act"><span>${esc(a.name || "Strength")}${a.duration_s ? ` · ${fmtTime(a.duration_s)}` : ""}</span></div>`).join("");
   const button = s.state === "done"
     ? (s.logged ? `<button type="button" class="link-btn" data-strength-log="${esc(s.date)}" data-done="0">Undo</button>` : "")
     : `<button type="button" class="mini" data-strength-log="${esc(s.date)}" data-done="1">Mark done</button>`;
-  return `<div class="strength-state">${STATE_PILL[s.state] || ""}${acts}${button}</div>`;
+  return `<div class="strength-state">${pill || s.state !== "today" ? STATE_PILL[s.state] || "" : ""}${acts}${button}</div>`;
 }
 
 // ---------- planned runs on the watch ----------
@@ -940,6 +983,50 @@ planEl.table.addEventListener("click", (e) => {
   if (b) garminAction(b);
 });
 
+// The next seven days at a glance: one cell per day, colored by the hardest thing planned. Tap to jump to it.
+const HARDNESS = ["rest", "cross", "easy", "long", "threshold", "intervals", "race"];
+const STRIP_LABEL = { threshold: "Thresh", intervals: "Intvls", cross: "Cross" }; // the cells are narrow on a phone
+let earlierOpen = false;
+function renderWeekStrip(sessions, today) {
+  const cells = [];
+  for (let i = 0; i < 7; i++) {
+    const day = addDays(today, i);
+    const all = sessions.filter((s) => s.date === day);
+    const runs = all.filter((s) => s.kind !== "strength");
+    const main = runs.sort((a, b) => HARDNESS.indexOf(b.kind) - HARDNESS.indexOf(a.kind))[0];
+    const lift = all.some((s) => s.kind === "strength");
+    const label = [main ? KINDS[main.kind].label : "Nothing planned", lift ? "strength" : ""].filter(Boolean).join(" + ");
+    cells.push(`<button type="button" class="ws-day${i === 0 ? " today" : ""}${main ? ` k-${main.kind}` : " empty"}" data-goto="${day}"
+        aria-label="${dayOf(day).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}: ${label}">
+      <span class="ws-wd">${dayOf(day).toLocaleDateString(undefined, { weekday: "short" })}</span>
+      <span class="ws-num">${dayOf(day).getDate()}</span>
+      <span class="ws-kind">${main ? STRIP_LABEL[main.kind] || KINDS[main.kind].label : "–"}</span>
+      ${lift ? '<i class="ws-lift" title="Strength"></i>' : ""}</button>`);
+  }
+  document.getElementById("week-strip").innerHTML = cells.join("");
+}
+document.getElementById("week-strip").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-goto]");
+  const row = b && planEl.table.querySelector(`tr[data-date="${b.dataset.goto}"]`);
+  if (!row) return;
+  setPlanPart("schedule");
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 1200);
+});
+
+// On phones the plan's three cards are pages: Schedule, Strength, Notes.
+const planPanel = document.querySelector(".view-plan");
+function setPlanPart(part) {
+  planPanel.dataset.part = part;
+  document.querySelectorAll("#plan-parts button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.part === part)));
+}
+document.getElementById("plan-parts").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-part]");
+  if (b) setPlanPart(b.dataset.part);
+});
+setPlanPart("schedule");
+
 function renderPlanView() {
   const sessions = planData.sessions;
   const today = isoToday();
@@ -949,6 +1036,7 @@ function renderPlanView() {
 
   if (!sessions.length) {
     planEl.summary.innerHTML = "";
+    document.getElementById("week-strip").innerHTML = "";
     planEl.table.innerHTML = `<div class="plan-empty">No sessions planned yet. Click <b>Create plan</b>, or ask the coach to suggest one and enter it here.</div>`;
   } else {
     // Summary: this week's progress and the next race.
@@ -963,9 +1051,10 @@ function renderPlanView() {
       nextRace ? `<span class="metric" style="--m:${css("--c-race")}">Next race <b>${esc(nextRace.title)}</b> ${daysTo === 0 ? "today" : `in ${daysTo} day${daysTo === 1 ? "" : "s"}`}</span>` : "",
     ].join("");
 
+    renderWeekStrip(sessions, today);
     const weeks = {};
     sessions.forEach((s) => (weeks[mondayOf(s.date)] ||= []).push(s));
-    planEl.table.innerHTML = Object.entries(weeks)
+    const weekHtml = Object.entries(weeks)
       .map(([monday, list]) => {
         const quality = list.filter((s) => ["threshold", "intervals", "race"].includes(s.kind)).length;
         const current = monday === mondayOf(today);
@@ -979,7 +1068,7 @@ function renderPlanView() {
             const more = list[i + 1] && list[i + 1].date === s.date;
             const cls = [s.date < today ? "past" : "", s.date === today ? "today" : "", s.kind === "race" ? "race-day" : "",
               lift ? "strength-row" : "", more ? "has-strength" : ""].join(" ");
-            return `<tr class="${cls}">
+            return `<tr class="${cls}" data-date="${esc(s.date)}">
               <td class="day">${sameDay ? "" : `<b>${dayOf(s.date).toLocaleDateString(undefined, { weekday: "short" })}</b><span>${shortDate(s.date)}</span>`}</td>
               ${lift
                 // Strength spans the row, so the exercise list gets the full width (it matters on a phone).
@@ -989,14 +1078,20 @@ function renderPlanView() {
               ${s.state === "upcoming" ? "" : `<td class="actual">${actualCell(s)}</td>`}`}</tr>`; // nothing done yet: the workout gets the full width
           })
           .join("");
-        return `<div class="plan-week${current ? " current" : ""}">
-          <div class="plan-week-head"><h3>Week of ${shortDate(monday)}</h3>
-            <span class="muted">${runs} session${runs === 1 ? "" : "s"} · ${quality} quality${lifts ? ` · ${lifts} strength` : ""}${current ? " · this week" : ""}</span></div>
+        return `<div class="plan-week${current ? " current" : ""}" data-week="${monday}">
+          <div class="plan-week-head"><h3>${current ? "This week" : `Week of ${shortDate(monday)}`}</h3>
+            <span class="muted">${runs} session${runs === 1 ? "" : "s"} · ${quality} quality${lifts ? ` · ${lifts} strength` : ""}</span></div>
           <div class="table-wrap"><table class="plan-table">
             <thead><tr><th>Day</th><th>Type</th><th>Workout</th><th>What you did</th></tr></thead>
             <tbody>${rows}</tbody></table></div></div>`;
-      })
-      .join("");
+      });
+    // The plan opens on this week; weeks already behind you fold away above it.
+    const mondays = Object.keys(weeks);
+    const past = mondays.filter((m) => m < mondayOf(today)).length;
+    planEl.table.innerHTML = (past
+      ? `<details class="plan-earlier"${earlierOpen ? " open" : ""}><summary>Earlier weeks (${past})</summary>${weekHtml.slice(0, past).join("")}</details>`
+      : "") + weekHtml.slice(past).join("");
+    planEl.table.querySelector(".plan-earlier")?.addEventListener("toggle", (e) => (earlierOpen = e.target.open));
   }
   planEl.notes.innerHTML = planData.notes
     ? renderMarkdown(planData.notes)
@@ -1032,6 +1127,7 @@ function strengthPhases(st) {
 
 function renderStrength() {
   const st = planData.strength;
+  document.querySelector('#plan-parts [data-part="strength"]').classList.toggle("attn", Boolean(st && st.enabled && st.issues.length));
   if (!st) {
     // The page is newer than the running app (or this is a copy saved before strength existed).
     strengthCard.innerHTML = `<div class="plan-empty">Restart the app on your Mac to turn on the strength plan.</div>`;
@@ -1102,23 +1198,52 @@ strengthCard.addEventListener("click", (e) => {
     strengthRequest("DELETE", "/api/strength", null, "Strength plan removed.");
   }
 });
-planEl.table.addEventListener("click", (e) => {
+document.addEventListener("click", (e) => { // in the plan table and on the Today card
   const b = e.target.closest("[data-strength-log]");
   if (b) strengthRequest("POST", "/api/strength/log", { date: b.dataset.strengthLog, done: b.dataset.done === "1" });
 });
 
-// Today view: the next strength session, under the next workout.
-const nextStrength = document.getElementById("st-strength");
-function renderNextStrength() {
-  const next = planData.strength && planData.strength.enabled ? planData.strength.next : null;
-  nextStrength.hidden = !next;
-  if (!next) return;
-  const days = Math.round((dayOf(next.date) - dayOf(isoToday())) / 864e5);
-  const when = days === 0 ? "Today" : days === 1 ? "Tomorrow" : dayOf(next.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-  const title = next.title.replace(/^(light )?strength /i, (m, light) => (light ? "Light " : ""));
-  nextStrength.innerHTML = `${kindChip("strength")}<b>${when}</b><small>${esc(title)}</small>`;
+// Today view: the day's sessions straight from the plan (always current, unlike the coach's notes),
+// and what's next once today is finished or empty.
+function todaySession(s) {
+  const lift = s.kind === "strength";
+  const status = lift ? strengthActual(s, false) : s.state === "today" ? "" : STATE_PILL[s.state] || "";
+  const onWatch = s.garmin && s.garmin.state === "sent" ? '<span class="pill good">⌚ On Garmin</span>' : "";
+  const detail = lift ? (s.notes && s.notes[0]) || "" : s.details;
+  return `<div class="today-session k-${KINDS[s.kind] ? s.kind : "easy"}">
+    <div class="ts-main">${kindChip(s.kind)}<span class="ts-title">${esc(s.title)}</span></div>
+    ${detail ? `<div class="ts-details">${esc(detail)}</div>` : ""}
+    ${status || onWatch ? `<div class="ts-state">${status}${onWatch}</div>` : ""}</div>`;
 }
-nextStrength.addEventListener("click", () => showTab("plan"));
+function renderTodayPlan() {
+  const today = isoToday();
+  document.getElementById("today-date").textContent = dayOf(today).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const el = document.getElementById("today-plan");
+  if (!planData.sessions.length) {
+    el.innerHTML = `<div class="today-empty">No plan yet. Open <b>Plan</b> to make one, or ask the coach for one.</div>`;
+    return;
+  }
+  const todays = planData.sessions.filter((s) => s.date === today);
+  let html = todays.length ? todays.map(todaySession).join("") : `<div class="today-empty">Nothing planned today.</div>`;
+  // Nothing left to do today: show the next day that has training.
+  const next = planData.sessions.find((s) => s.date > today && s.kind !== "rest");
+  if (next && !todays.some((s) => s.state === "today" && s.kind !== "rest")) {
+    const days = Math.round((dayOf(next.date) - dayOf(today)) / 864e5);
+    const when = days === 1 ? "Tomorrow" : dayOf(next.date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    html += `<div class="today-next"><span class="eyebrow">Next up · ${when}</span>
+      ${planData.sessions.filter((s) => s.date === next.date).map(todaySession).join("")}</div>`;
+  }
+  el.innerHTML = html;
+  dedupeCoachTitle();
+}
+// The coach's notes repeat the session's title; when it's already on the card above, once is enough.
+function dedupeCoachTitle() {
+  const head = document.querySelector("#st-next .status-headline");
+  if (!head) return;
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  head.hidden = [...document.querySelectorAll("#today-plan .ts-title")].some((t) => same(t.textContent, head.textContent));
+}
+document.getElementById("today-open-plan").addEventListener("click", () => showTab("plan"));
 
 const KIND_OPTIONS = ["easy", "long", "threshold", "intervals", "race", "rest", "cross", "strength"];
 function editRow(s = {}) {
@@ -1132,6 +1257,7 @@ function editRow(s = {}) {
 
 function renderPlanEdit() {
   planEl.summary.innerHTML = "";
+  document.getElementById("week-strip").innerHTML = "";
   planEl.actions.innerHTML = `<button type="button" id="plan-add">+ Add session</button><button type="button" id="plan-cancel">Cancel</button><button type="button" class="primary" id="plan-save">Save plan</button>`;
   planEl.table.innerHTML = `<div class="table-wrap"><table class="plan-table" id="plan-edit-table">
     <thead><tr><th>Date</th><th>Type</th><th>Workout</th><th>Details</th><th></th></tr></thead>
@@ -1177,7 +1303,7 @@ function renderPlan() {
   planEl.saved.textContent = "";
   if (planEditing) renderPlanEdit();
   else renderPlanView();
-  renderNextStrength();
+  renderTodayPlan();
 }
 
 async function loadPlan() {
@@ -1236,7 +1362,7 @@ function renderStatus(s) {
   if (!r) {
     bodyCard.style.removeProperty("--lvl");
     document.getElementById("st-body").innerHTML = `<div class="status-empty">No status yet. Click <b>Refresh</b> to get one (about 30 seconds).</div>`;
-    document.getElementById("st-next").innerHTML = `<div class="status-empty">Your next session appears here once the status is generated.</div>`;
+    document.getElementById("st-next").innerHTML = `<div class="status-empty">Tap ↻ on the Body card and the coach adds notes on your next session here.</div>`;
     document.getElementById("st-last").innerHTML = "";
     document.getElementById("st-next-when").textContent = "";
     return;
@@ -1259,6 +1385,7 @@ function renderStatus(s) {
   document.getElementById("st-last").innerHTML = `
     <div class="status-headline">${esc(r.last_12_hours.headline)}</div>
     ${clamp(r.last_12_hours.summary, 6)}`;
+  dedupeCoachTitle();
 }
 document.querySelector(".view-today").addEventListener("click", (e) => {
   const p = e.target.closest(".clamp");
@@ -1486,9 +1613,14 @@ document.getElementById("wo-sessions").addEventListener("click", (e) => {
   const scroll = e.currentTarget.scrollTop;
   renderWorkoutList();
   e.currentTarget.scrollTop = scroll;
+  // On a phone the session opens as its own page (the list comes back with "All sessions").
+  document.querySelector(".view-workouts").classList.add("show-detail");
+  if (matchMedia("(max-width: 760px)").matches) window.scrollTo(0, 0);
   renderWorkoutDetail();
-  // On a phone the detail card sits below the list: bring it into view.
-  if (matchMedia("(max-width: 760px)").matches) document.querySelector(".wo-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+document.getElementById("wo-back").addEventListener("click", () => {
+  document.querySelector(".view-workouts").classList.remove("show-detail");
+  renderWorkoutTrend(); // its chart was hidden, so it has to be drawn again
 });
 
 function renderWorkoutTrend() {

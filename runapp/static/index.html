@@ -23,16 +23,15 @@
 </head>
 <body>
 <div class="app">
-  <!-- Navigation: a rail on wide screens, a bottom tab bar on phones -->
+  <!-- Navigation: a bottom tab bar on phones (designed first), a rail on wide screens.
+       Five places: what to do today, the plan, the coach, how training is going, what's been done. -->
   <nav class="rail tabs" role="tablist" aria-label="Sections">
     <img class="brand-mark" src="/static/icons/icon-192.png" alt="" width="48" height="48">
-    <button role="tab" data-tab="overview"><span class="icon" data-icon="gauge"></span><span>Today</span></button>
-    <button role="tab" data-tab="plan"><span class="icon" data-icon="calendar"></span><span>Plan</span></button>
-    <button role="tab" data-tab="workouts"><span class="icon" data-icon="zap"></span><span>Workouts</span></button>
-    <button role="tab" data-tab="form"><span class="icon" data-icon="shoe"></span><span>Form</span></button>
-    <button role="tab" data-tab="training"><span class="icon" data-icon="heart"></span><span>Training</span></button>
-    <button role="tab" data-tab="records"><span class="icon" data-icon="award"></span><span>Records</span></button>
-    <button role="tab" data-tab="activities"><span class="icon" data-icon="list"></span><span>Activities</span></button>
+    <button role="tab" data-section="today"><span class="icon" data-icon="gauge"></span><span>Today</span></button>
+    <button role="tab" data-section="plan"><span class="icon" data-icon="calendar"></span><span>Plan</span></button>
+    <button role="tab" data-section="coach" class="tab-coach"><span class="icon" data-icon="chat"></span><span>Coach</span></button>
+    <button role="tab" data-section="progress"><span class="icon" data-icon="trend"></span><span>Progress</span></button>
+    <button role="tab" data-section="history"><span class="icon" data-icon="list"></span><span>History</span></button>
   </nav>
 
   <div class="main">
@@ -44,16 +43,29 @@
           <div id="data-range" class="sub"></div>
         </div>
       </div>
-      <div class="header-actions">
-        <span id="sync-status"></span>
-        <div class="segmented" id="units" role="group" aria-label="Units">
-          <button data-unit="km">km</button><button data-unit="mi">mi</button>
-        </div>
+      <span id="sync-status"></span>
+      <div class="topbar-right">
         <button class="primary" id="sync-btn">Sync Garmin</button>
-        <button type="button" id="install-btn" hidden>Install app</button>
-        <button type="button" id="logout-btn" hidden>Log out</button>
+        <button type="button" class="icon-btn" id="menu-btn" aria-label="Settings" aria-expanded="false" aria-controls="app-menu"><span class="icon" data-icon="sliders"></span></button>
+        <!-- Inline on wide screens; on phones a sheet opened by the settings button. -->
+        <div class="header-actions" id="app-menu">
+          <h2 class="menu-title">Settings</h2>
+          <div class="menu-row"><span class="menu-label">Distances in</span>
+            <div class="segmented" id="units" role="group" aria-label="Units">
+              <button data-unit="km">km</button><button data-unit="mi">mi</button>
+            </div>
+          </div>
+          <p class="menu-note">Paces are always per mile.</p>
+          <button type="button" id="install-btn" hidden>Install app</button>
+          <button type="button" id="logout-btn" hidden>Log out</button>
+          <button type="button" class="primary menu-done" id="menu-done">Done</button>
+        </div>
       </div>
     </header>
+    <div class="menu-backdrop" id="menu-backdrop" hidden></div>
+
+    <!-- Sections with more than one page get these tabs (Progress: Training / Workouts / Form). -->
+    <div class="subnav" id="subnav" role="tablist" aria-label="Pages in this section" hidden></div>
 
     <div id="offline-banner" class="banner offline-banner" role="status" hidden></div>
     <div id="demo-banner" class="banner" hidden>
@@ -78,10 +90,16 @@
       <article class="card status-card st-next" id="st-next-card">
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="route"></span></span>
-          <div class="grow"><h2>Next workout</h2><div class="sub" id="st-next-when"></div></div>
+          <div class="grow"><h2>Today's training</h2><div class="sub" id="today-date"></div></div>
+          <button type="button" class="ghost" id="today-open-plan">Plan ›</button>
         </div>
-        <div class="card-scroll" id="st-next"></div>
-        <button type="button" class="next-strength" id="st-strength" hidden></button>
+        <div class="card-scroll">
+          <div class="today-plan" id="today-plan"></div>
+          <div class="coach-take">
+            <div class="coach-take-head"><span class="eyebrow">Coach's notes</span><span class="sub" id="st-next-when"></span></div>
+            <div id="st-next"></div>
+          </div>
+        </div>
       </article>
 
       <article class="card status-card st-last acc-train">
@@ -143,7 +161,10 @@
     </section>
 
     <!-- ===== Plan: table, with strength and notes beside it ===== -->
-    <section class="panel view-plan" data-panel="plan" role="tabpanel" hidden>
+    <section class="panel view-plan" data-panel="plan" data-part="schedule" role="tabpanel" hidden>
+      <div class="segmented part-tabs" id="plan-parts" role="tablist" aria-label="Plan pages">
+        <button type="button" data-part="schedule">Schedule</button><button type="button" data-part="strength">Strength</button><button type="button" data-part="notes">Notes</button>
+      </div>
       <article class="card acc-coach plan-main">
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="calendar"></span></span>
@@ -151,6 +172,7 @@
           <div class="plan-actions" id="plan-actions"></div>
         </div>
         <div class="plan-summary" id="plan-summary"></div>
+        <div class="week-strip" id="week-strip" aria-label="This week at a glance"></div>
         <div id="plan-proposals"></div>
         <div class="card-scroll" id="plan-table"></div>
         <div class="plan-saved muted" id="plan-saved"></div>
@@ -190,6 +212,7 @@
         <div class="card-scroll" id="wo-sessions"></div>
       </article>
       <article class="card acc-intensity wo-detail">
+        <button type="button" class="back-btn" id="wo-back">‹ All sessions</button>
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="zap"></span></span>
           <div class="grow"><h2 id="wo-title">Session</h2><div class="sub" id="wo-sub"></div></div>
@@ -378,7 +401,7 @@
       <div class="coach-head-actions">
         <button type="button" id="notes-toggle" aria-expanded="false" aria-controls="coach-notes">About you</button>
         <button type="button" id="plan-toggle" title="Open the Plan view">Plan</button>
-        <button type="button" id="coach-reset" title="Start a new conversation">New</button>
+        <button type="button" id="coach-reset" title="Start a new conversation">New chat</button>
         <button type="button" id="coach-close" class="coach-close" aria-label="Close coach">✕</button>
       </div>
     </div>
@@ -406,8 +429,6 @@
     </form>
   </aside>
 </div>
-
-<button type="button" class="coach-fab" id="coach-open" aria-controls="coach"><span class="icon" data-icon="chat"></span>Ask coach</button>
 
 <script defer src="/static/app.js"></script>
 </body>

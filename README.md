@@ -33,6 +33,21 @@ The app only answers to `localhost`, `127.0.0.1` and Tailscale (`*.ts.net`) name
 changes, so another website open in your browser can't read your data or start a sync. To reach it under another
 name, start it with `RUNAPP_ALLOWED_HOSTS=name1,name2`.
 
+## Finding your way around
+
+The app is designed for the phone first; on a computer the same pages sit side by side with the coach in its own column.
+
+- **Today**: today's sessions from your plan (with the coach's notes on them), how your body is doing, the last 12
+  hours, then this week's numbers, the weekly chart and your goals.
+- **Plan**: the next seven days at a glance (tap a day to jump to it), then the schedule week by week. Weeks already
+  behind you fold away under **Earlier weeks**. On a phone, **Strength** and **Notes** are their own pages.
+- **Coach** (a tab on phones, always visible on a computer).
+- **Progress**: **Training** (zones, efficiency, monthly distance), **Workouts** (threshold and interval sessions;
+  on a phone a session opens as its own page) and **Form**.
+- **History**: **Activities** and **Races & records**.
+
+The ↻ button syncs Garmin; the sliders button holds the settings (km or miles, install, log out).
+
 ## Use it on your phone (Tailscale)
 
 The app runs on your Mac; your phone opens it over [Tailscale](https://tailscale.com), a private network
