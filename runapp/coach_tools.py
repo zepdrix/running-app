@@ -10,7 +10,7 @@ from datetime import date
 
 from mcp.server.mcpserver import MCPServer
 
-from . import analysis, db, form, plan, query, races, wellness, workouts
+from . import analysis, db, form, plan, query, races, strength, wellness, workouts
 
 server = MCPServer("running", instructions="Read-only access to the user's running database.")
 
@@ -23,7 +23,7 @@ def training_snapshot() -> str:
     for the last 5 days, the race log (official results, effort, courses, upcoming races),
     recent threshold/interval sessions rep by rep (paces in seconds per mile), running form
     (cadence, ground contact, vertical ratio and stride at matched pace bands; form fatigue within
-    runs; left/right balance), and any plan
+    runs; left/right balance), strength training (phase, sessions done, clashes with runs), and any plan
     changes still waiting for the athlete's approval. Distances in meters, times in seconds.
     Call this first."""
     conn = db.connect()
@@ -40,6 +40,7 @@ def training_snapshot() -> str:
             "races": races.prompt_summary(conn),
             "recent_quality_sessions": workouts.brief(conn, 5),
             "running_form": form.brief(conn),
+            "strength": strength.brief(conn),
             "pending_plan_proposals": plan.proposals(conn),
         }
     finally:
@@ -64,8 +65,10 @@ def propose_plan_changes(summary: str, changes: list[dict]) -> str:
     changes: dated operations, each one of
       {"op": "set", "date": "YYYY-MM-DD", "kind": K, "title": "...", "details": "..."}  replace that day's session
       {"op": "add", "date": "YYYY-MM-DD", "kind": K, "title": "...", "details": "..."}  add a second session that day
-      {"op": "remove", "date": "YYYY-MM-DD"}                                          clear that day
-    K is one of easy, long, threshold, intervals, race, rest, cross. Give paces in min:sec per mile.
+      {"op": "remove", "date": "YYYY-MM-DD"}                                          clear that day's run
+    K is one of easy, long, threshold, intervals, race, rest, cross, strength. Give paces in min:sec per mile.
+    Runs and strength are separate: with kind "strength", set replaces only that day's strength session, and
+    {"op": "remove", "date": ..., "kind": "strength"} removes only it; any other kind leaves the strength session alone.
     """
     conn = db.connect()
     try:

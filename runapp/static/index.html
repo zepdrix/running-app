@@ -81,6 +81,7 @@
           <div class="grow"><h2>Next workout</h2><div class="sub" id="st-next-when"></div></div>
         </div>
         <div class="card-scroll" id="st-next"></div>
+        <button type="button" class="next-strength" id="st-strength" hidden></button>
       </article>
 
       <article class="card status-card st-last acc-train">
@@ -141,7 +142,7 @@
       </article>
     </section>
 
-    <!-- ===== Plan: table + notes side by side ===== -->
+    <!-- ===== Plan: table, with strength and notes beside it ===== -->
     <section class="panel view-plan" data-panel="plan" role="tabpanel" hidden>
       <article class="card acc-coach plan-main">
         <div class="card-title">
@@ -153,6 +154,13 @@
         <div id="plan-proposals"></div>
         <div class="card-scroll" id="plan-table"></div>
         <div class="plan-saved muted" id="plan-saved"></div>
+      </article>
+      <article class="card acc-strength plan-strength">
+        <div class="card-title">
+          <span class="badge-icon"><span class="icon" data-icon="dumbbell"></span></span>
+          <div class="grow"><h2>Strength</h2><div class="sub">Fitted around your hard runs and races</div></div>
+        </div>
+        <div class="card-scroll" id="strength-card"></div>
       </article>
       <article class="card acc-coach plan-side">
         <div class="card-title">

@@ -69,7 +69,10 @@ left today, it's today's; otherwise the next one. If their body status calls for
 and explain why in adjustment (otherwise adjustment is ""). With no plan, recommend one based on their \
 data. kind classifies the session (easy, long, threshold, intervals for anything faster than threshold, \
 race, rest, cross for other sports). details gives the concrete structure: warm-up, main set with paces \
-and HR caps, cool-down.
+and HR caps, cool-down. Strength sessions ([strength] in the plan) are extras next to the runs: next_workout \
+is always the next run, race or rest day, never a strength session. When a strength session is planned for \
+the same day, name it in the last line of details (e.g. "Then: Strength A, about 20 min"); if their body \
+status is low, say in adjustment to skip it.
 
 Style: headline at most 8 words. summary at most 2 short sentences, quoting real numbers. details at \
 most 3 short lines separated by newlines. Plain text, no Markdown. Speak to them directly ("you"). \

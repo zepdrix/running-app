@@ -111,9 +111,26 @@ CREATE TABLE IF NOT EXISTS status_reports (
 CREATE TABLE IF NOT EXISTS plan_sessions (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     date     TEXT NOT NULL,   -- YYYY-MM-DD
-    kind     TEXT NOT NULL,   -- easy | long | threshold | intervals | race | rest | cross
+    kind     TEXT NOT NULL,   -- easy | long | threshold | intervals | race | rest | cross | strength
     title    TEXT NOT NULL,
     details  TEXT NOT NULL DEFAULT ''
+);
+
+-- Days you ticked a strength session off by hand (strength.py). Recorded strength activities count without this.
+CREATE TABLE IF NOT EXISTS strength_log (
+    date       TEXT PRIMARY KEY,   -- YYYY-MM-DD
+    logged_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Planned runs converted to watch steps, and sent to Garmin once garmin_workout_id is set (garmin_workouts.py).
+CREATE TABLE IF NOT EXISTS garmin_workouts (
+    date                TEXT PRIMARY KEY,   -- the plan day the workout is for
+    source              TEXT NOT NULL,      -- the session text the steps were built from
+    steps_json          TEXT NOT NULL,
+    garmin_workout_id   INTEGER,            -- in your Garmin Connect workout library
+    garmin_schedule_id  INTEGER,            -- on your Garmin calendar
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    sent_at             TEXT
 );
 
 CREATE TABLE IF NOT EXISTS coach_state (

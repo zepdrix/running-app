@@ -8,7 +8,7 @@
  * - Libraries (static/vendor) and fonts: cache first (their URLs are versioned).
  * - Anything that isn't a GET (coach messages, saves, sync, login) is never cached.
  */
-const VERSION = "v5"; // bump to drop old cached files (e.g. the old icon)
+const VERSION = "v6"; // bump to drop old cached files (e.g. the old icon)
 const SHELL = `runapp-shell-${VERSION}`;
 const DATA = `runapp-data-${VERSION}`;
 const LIBS = `runapp-libs-${VERSION}`;
@@ -56,7 +56,7 @@ const cacheable = (res) => res && res.ok && res.type === "basic" && !res.redirec
 async function precache(cacheName, files) {
   const cache = await caches.open(cacheName);
   await Promise.all(files.map(async (file) => {
-    const res = await fetch(file);
+    const res = await fetch(file, { cache: "no-cache" });
     if (cacheable(res)) await cache.put(file, res);
   }));
 }
@@ -72,8 +72,10 @@ async function save(cache, request, copy) {
 
 async function networkFirst(request, cacheName, { timeout, markOffline } = {}) {
   const cache = await caches.open(cacheName);
-  // Every good answer is saved, including one that arrives after we stopped waiting for it.
-  const fetched = fetch(request).then((res) => {
+  // "no-cache": always ask the Mac whether the file changed, rather than trusting the browser's own copy
+  // (which it may consider fresh for hours). Every good answer is saved, including one that arrives
+  // after we stopped waiting for it.
+  const fetched = fetch(request, { cache: "no-cache" }).then((res) => {
     if (cacheable(res)) save(cache, request, res.clone()).catch(() => {});
     return res;
   });

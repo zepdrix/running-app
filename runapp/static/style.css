@@ -32,6 +32,7 @@
   --c-race: #4a3aa7;
   --c-cross: #9aa3b2;
   --c-rest: #9aa3b2;
+  --c-strength: #b5651d;   /* not a run: its own hue, and a square marker */
   --z1: var(--c-easy);
   --z2: var(--c-long);
   --z3: var(--c-threshold);
@@ -45,6 +46,7 @@
   --acc-goal: var(--c-race);
   --acc-record: var(--c-threshold);
   --acc-coach: #6a4fd1;
+  --acc-strength: var(--c-strength);
 
   /* state */
   --good: #0ca30c;
@@ -79,6 +81,7 @@
     --c-race: #9085e9;
     --c-cross: #6f7889;
     --c-rest: #6f7889;
+  --c-strength: #b86a4b;
     --acc-coach: #9085e9;
     --good-text: #2fbf4f;
     --warning-text: #fab219;
@@ -109,6 +112,7 @@
   --c-race: #9085e9;
   --c-cross: #6f7889;
   --c-rest: #6f7889;
+  --c-strength: #b86a4b;
   --acc-coach: #9085e9;
   --good-text: #2fbf4f;
   --warning-text: #fab219;
@@ -188,6 +192,7 @@ textarea:focus, input:focus, select:focus { outline: 2px solid color-mix(in srgb
 .k-race { --k: var(--c-race); }
 .k-cross { --k: var(--c-cross); }
 .k-rest { --k: var(--c-rest); }
+.k-strength { --k: var(--c-strength); }
 .kind {
   display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px 2px 7px; border-radius: 999px;
   font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap;
@@ -195,6 +200,7 @@ textarea:focus, input:focus, select:focus { outline: 2px solid color-mix(in srgb
   border: 1px solid color-mix(in srgb, var(--k) 35%, transparent);
 }
 .kind::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--k); }
+.kind.k-strength::before { border-radius: 2px; }
 
 /* state pills: icon + label, never color alone */
 .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
@@ -289,6 +295,7 @@ button.icon-btn { width: 30px; height: 30px; padding: 0; border-radius: 50%; fon
 .acc-goal { --acc: var(--acc-goal); }
 .acc-record { --acc: var(--acc-record); }
 .acc-coach { --acc: var(--acc-coach); }
+.acc-strength { --acc: var(--acc-strength); }
 
 /* ---------- tiles ---------- */
 .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
@@ -388,6 +395,84 @@ td .strong { font-family: var(--font-display); font-size: 15px; font-weight: 600
 .plan-table td.del button { border: 0; background: transparent; color: var(--muted); padding: 4px; }
 .plan-table td.del button:hover { color: var(--critical-text); }
 .plan-saved { font-size: 13px; margin-top: 10px; }
+
+/* strength: a second row on the same day as the run, and its own card */
+.plan-table tr.has-strength td { border-bottom-color: transparent; }
+.plan-table tr.strength-row td { padding-top: 4px; }
+.plan-table tr.today.strength-row td:first-child { box-shadow: inset 3px 0 0 var(--acc-coach); }
+.exercises summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.exercises summary::marker { color: var(--c-strength); }
+.exercises .ex-note { font-size: 12px; color: var(--text-secondary); margin: 6px 0 0; }
+.ex-list { list-style: none; margin: 6px 0 2px; padding: 0; display: grid; gap: 5px; }
+.ex-list li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 14px; align-items: baseline; padding: 5px 9px; border-radius: 8px;
+  background: color-mix(in srgb, var(--c-strength) 7%, transparent); border-left: 3px solid color-mix(in srgb, var(--c-strength) 55%, transparent);
+}
+.ex-list .ex-name { font-weight: 600; font-size: 13px; }
+.ex-list .ex-dose { font-family: var(--font-display); font-weight: 600; font-size: 13px; white-space: nowrap; }
+.ex-list .ex-cue { grid-column: 1 / -1; font-size: 12px; color: var(--text-secondary); }
+.strength-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.strength-head .kind { margin-right: 4px; }
+.strength-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.strength-state .mini { font-size: 12px; padding: 2px 10px; border-radius: 999px; }
+.strength-sub { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 8px; font-family: var(--font-ui); }
+.strength-hint { font-size: 12px; color: var(--text-secondary); margin: 10px 0 0; }
+.strength-hint .link-btn { color: var(--text-primary); text-decoration: underline; padding: 0; }
+.strength-intro { color: var(--text-secondary); margin: 0 0 12px; font-size: 13px; }
+.strength-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.strength-form label.wide { grid-column: 1 / -1; }
+.strength-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-secondary); min-width: 0; }
+.strength-form select, .strength-form input { width: 100%; }
+.strength-form .form-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.strength-form .form-actions button { border-radius: 999px; font-size: 13px; padding: 5px 14px; }
+.strength-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.strength-clash {
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-radius: 10px; padding: 9px 11px; margin-bottom: 12px; font-size: 13px;
+}
+.strength-clash ul { margin: 4px 0 8px; padding-left: 18px; color: var(--text-secondary); }
+.strength-clash button { border-radius: 999px; font-size: 13px; padding: 4px 14px; }
+.strength-phases { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0 0 12px; }
+.strength-rules:last-child, .strength-phases:last-child { margin-bottom: 0; }
+.strength-phases div { border: 1px solid var(--border); border-radius: 9px; padding: 6px 8px; font-size: 12px; color: var(--text-secondary); min-width: 0; }
+.strength-phases b { display: block; font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.strength-phases .now { border-color: color-mix(in srgb, var(--c-strength) 60%, transparent); background: color-mix(in srgb, var(--c-strength) 9%, transparent); }
+.strength-rules { margin: 0 0 12px; padding-left: 18px; font-size: 13px; color: var(--text-secondary); display: grid; gap: 4px; }
+.strength-rules li::marker { color: var(--c-strength); }
+details.strength-settings summary { cursor: pointer; font-weight: 600; margin-bottom: 10px; }
+details.strength-settings summary::marker { color: var(--c-strength); }
+.strength-msg { font-size: 12px; margin-top: 8px; }
+.strength-msg:empty { display: none; }
+.next-strength {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: 10px; padding: 7px 10px; text-align: left;
+  border: 1px solid color-mix(in srgb, var(--c-strength) 35%, transparent); border-radius: 10px; font-size: 13px;
+  background: color-mix(in srgb, var(--c-strength) 8%, transparent); color: var(--text-primary);
+}
+.next-strength small { color: var(--text-secondary); font-size: 12px; }
+/* planned runs on the watch */
+.garmin-row { margin-top: 6px; }
+.plan-table .mini { font-size: 12px; padding: 3px 11px; border-radius: 999px; }
+.garmin-steps { margin-top: 6px; }
+.garmin-steps summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+.garmin-steps summary::marker { color: var(--acc-train); }
+.garmin-note { font-size: 12px; color: var(--text-secondary); margin: 6px 0 0; }
+.garmin-note.warn { color: var(--warning-text); }
+.garmin-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 2px; }
+.watch-steps { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.watch-steps li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 5px 9px; border-radius: 8px; font-size: 13px;
+  background: var(--surface-2); border-left: 3px solid var(--ws, var(--axis));
+}
+.watch-steps .ws-warmup, .watch-steps .ws-cooldown { --ws: var(--c-easy); }
+.watch-steps .ws-run { --ws: var(--c-threshold); }
+.watch-steps .ws-recover { --ws: var(--c-long); }
+.watch-steps .ws-name { font-weight: 600; min-width: 74px; }
+.watch-steps .ws-length { font-family: var(--font-display); font-weight: 600; }
+.watch-steps .ws-target { color: var(--text-secondary); }
+.watch-steps .ws-note { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.watch-steps li.ws-repeat { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 10px; align-items: center; background: none; padding: 0; border-left: 0; }
+.watch-steps .ws-times { font-family: var(--font-display); font-weight: 700; font-size: 14px; padding-left: 4px; }
+.watch-steps .ws-repeat > .watch-steps { margin: 0; }
 .plan-notes { color: var(--text-secondary); }
 .plan-notes p, .plan-notes ul { margin: 0 0 10px; }
 .plan-notes ul { padding-left: 20px; }
@@ -631,7 +716,8 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
   .today-weekly { grid-column: 1 / 9; }
   .today-goals { grid-column: 9 / 13; }
 
-  .view-plan { grid-template-columns: minmax(0, 2.6fr) minmax(260px, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .view-plan { grid-template-columns: minmax(0, 2.4fr) minmax(280px, 1fr); grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr); }
+  .plan-main { grid-row: 1 / 3; }
   .view-training { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr); }
   .tr-zones { grid-column: 1 / -1; }
   .view-records { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1.25fr) minmax(0, 1fr); }
@@ -644,10 +730,6 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 }
 
 /* ---------- phones: bottom tab bar, coach as a sheet ---------- */
-@media (max-width: 760px) {
-  h1 { font-size: 22px; }
-  .card { padding: 14px; }
-}
 @media (max-width: 980px) {
   .app { grid-template-columns: minmax(0, 1fr); }
   .main { padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) calc(150px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
@@ -673,6 +755,168 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
     box-shadow: 0 6px 20px color-mix(in srgb, var(--acc-coach) 40%, transparent);
   }
 }
+
+/* ---------- small phones (tuned on an iPhone 12 mini: 375 x 812 pt, notch 50 pt, home bar 34 pt) ---------- */
+.m-only { display: none; }
+@media (max-width: 980px) {
+  html { -webkit-text-size-adjust: 100%; }
+  button, a, summary, select { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  /* iOS zooms the page when a focused field's text is under 16px. */
+  input, select, textarea { font-size: 16px !important; }
+  /* Home-screen app: the page runs under the status bar, whose clock and battery are always white.
+     Give them a dark backing in both themes, above everything including the coach sheet. */
+  body::before {
+    content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); z-index: 11;
+    background: rgba(18, 23, 32, 0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  }
+  /* These two had their notch and home-bar spacing overridden by later rules. */
+  .coach-head { padding-top: max(14px, calc(env(safe-area-inset-top) + 8px)); position: relative; }
+  .coach-form { padding-bottom: 12px; }
+  /* The sheet stops at the tab bar, so the tabs are always a way out; the close button is big and top right. */
+  .coach { inset: 0 0 var(--rail-h, calc(58px + env(safe-area-inset-bottom))) 0; }
+  .coach-head .title-row { padding-right: 52px; }
+  .coach-head-actions .coach-close {
+    position: absolute; right: 12px; top: max(12px, calc(env(safe-area-inset-top) + 6px));
+    width: 42px; height: 42px; padding: 0; border-radius: 50%; font-size: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface-2); border-color: var(--axis);
+  }
+  .coach-body { overscroll-behavior: contain; }
+  html.coach-open, html.coach-open body { overflow: hidden; }
+  summary { padding: 5px 0; }
+}
+@media (max-width: 760px) {
+  .m-only { display: revert; }
+  .m-hide { display: none !important; }
+  .main { gap: 10px; padding-top: max(14px, calc(env(safe-area-inset-top) + 8px)); padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+  .panel { gap: 10px; }
+  .card { padding: 12px; border-radius: 13px; }
+  .card-title { gap: 8px; margin-bottom: 8px; }
+  .card-title .sub { font-size: 11.5px; line-height: 1.35; }
+  .chart-box { height: 220px; }
+  .segmented button { padding: 6px 12px; }
+  button.link-btn { padding: 6px 8px; }
+
+  /* header: one row (logo, title, units, sync), with the sync note under it */
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 8px; align-items: center; }
+  .header-actions { display: contents; }
+  .topbar-title { grid-column: 1; grid-row: 1; gap: 10px; min-width: 0; }
+  .topbar h1 { font-size: 21px; white-space: nowrap; }
+  img.brand-mobile { width: 34px; height: 34px; border-radius: 9px; }
+  #data-range { display: none; }
+  #units { grid-column: 2; grid-row: 1; }
+  #units button { padding: 6px 10px; font-size: 13px; }
+  #sync-btn {
+    grid-column: 3; grid-row: 1; width: 38px; height: 34px; padding: 0; font-size: 0;
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
+  }
+  #sync-btn::before { content: "↻"; font-size: 19px; line-height: 1; }
+  #sync-btn:disabled::before { animation: spin 1s linear infinite; }
+  #sync-status { grid-column: 1; grid-row: 2; max-width: none; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #install-btn, #logout-btn { grid-row: 2; border: 0; background: transparent; padding: 4px 2px; font-size: 12px; color: var(--text-secondary); text-decoration: underline; white-space: nowrap; justify-self: end; }
+  #install-btn { grid-column: 2; }
+  #logout-btn { grid-column: 3; }
+
+  /* today */
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile { padding: 10px 12px; }
+  .tile .tile-top { gap: 6px; }
+  .tile .label { font-size: 11.5px; line-height: 1.25; }
+  .tile .value { font-size: 25px; margin: 6px 0 5px; }
+  .tile .delta { font-size: 11px; gap: 4px; }
+  .tile .delta .pill { font-size: 11px; padding: 1px 7px; }
+  .status-headline.big { font-size: 18px; }
+
+  /* coach button: a round icon, so it hides less of the page */
+  .coach-fab { width: 52px; height: 52px; padding: 0; justify-content: center; font-size: 0; gap: 0; right: 14px; bottom: calc(70px + env(safe-area-inset-bottom)); }
+  .coach-fab .icon { width: 22px; height: 22px; }
+
+  /* plan: each session is a block (day on the left; type, workout and what you did stacked beside it) */
+  .plan-summary { gap: 6px; margin-bottom: 10px; }
+  .plan-week { margin-top: 14px; }
+  .plan-week-head { gap: 2px 10px; }
+  .plan-table, .plan-table tbody { display: block; }
+  .plan-table thead { display: none; }
+  .plan-table tr { display: grid; grid-template-columns: 46px auto minmax(0, 1fr); gap: 5px 10px; padding: 10px 6px; border-bottom: 1px solid var(--grid); }
+  .plan-table td { display: block; padding: 0; border: 0; grid-column: 2 / -1; grid-row: 2; }
+  .plan-table td.day { grid-column: 1; grid-row: 1 / span 2; width: auto; }
+  .plan-table td.type { grid-column: 2; grid-row: 1; width: auto; }
+  .plan-table td.actual { grid-column: 3; grid-row: 1; width: auto; }
+  .plan-table .actual-list { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 6px; }
+  .plan-table tr.today { background: color-mix(in srgb, var(--acc-coach) 10%, transparent); box-shadow: inset 3px 0 0 var(--acc-coach); border-radius: 4px; }
+  .plan-table tr.today td { background: none; }
+  .plan-table tr.today td:first-child, .plan-table tr.today.strength-row td:first-child { box-shadow: none; }
+  .plan-table tr.has-strength { border-bottom: 0; padding-bottom: 4px; }
+  .plan-table tr.strength-row { padding-top: 4px; }
+  .plan-table tr.strength-row td.day { display: none; }
+  .plan-table tr.strength-row td { grid-column: 1 / -1; grid-row: 1; }
+  .ex-list li { grid-template-columns: minmax(0, 1fr) auto; padding: 6px 9px; }
+  .strength-state .mini, .plan-table .mini { padding: 6px 13px; }
+  .watch-steps .ws-name { min-width: 66px; }
+  /* editing: date and type side by side, workout and details full width */
+  #plan-edit-table tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; gap: 6px; padding: 10px 0; }
+  #plan-edit-table td { grid-column: 1 / -1; grid-row: auto; }
+  #plan-edit-table td:nth-child(1) { grid-column: 1; grid-row: 1; }
+  #plan-edit-table td:nth-child(2) { grid-column: 2; grid-row: 1; }
+  #plan-edit-table td.del { grid-column: 3; grid-row: 1; width: auto; align-self: center; }
+  .plan-actions { flex-wrap: wrap; justify-content: flex-end; }
+
+  /* workouts: the list scrolls inside its card so the session detail stays one swipe away */
+  #wo-sessions { max-height: 46vh; }
+  .wo-detail { scroll-margin-top: calc(env(safe-area-inset-top) + 8px); }
+  .wo-row { grid-template-columns: 58px minmax(0, 1fr) auto; gap: 4px 8px; padding: 8px 6px; }
+  .wo-reps th:nth-child(3), .wo-reps td:nth-child(3), .wo-reps th:nth-child(6), .wo-reps td:nth-child(6),
+  .wo-reps th:nth-child(7), .wo-reps td:nth-child(7), .wo-reps th:nth-child(8), .wo-reps td:nth-child(8) { display: none; }
+  .wo-reps table td, .wo-reps table th { padding: 6px 4px; }
+
+  /* form */
+  #fm-fatigue { max-height: 60vh; }
+  .fm-fatigue td, .fm-fatigue th { padding: 6px 3px; }
+  .fm-fatigue td.run b { display: block; margin: 0 0 2px; }
+  #fm-metric { width: 100%; }
+  #fm-metric button { flex: 1; padding: 6px 4px; }
+
+  /* records */
+  .race-up-list { grid-template-columns: minmax(0, 1fr); }
+  .races-table, .races-table tbody { display: block; }
+  .races-table thead { display: none; }
+  .races-table tr { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, auto); gap: 2px 10px; padding: 10px 2px; border-bottom: 1px solid var(--grid); }
+  .races-table td { display: block; padding: 0; border: 0; text-align: right; }
+  .races-table td:nth-child(1) { grid-column: 1; grid-row: 1 / span 3; text-align: left; }
+  .races-table td.race-name { grid-column: 2; grid-row: 1 / span 3; min-width: 0; }
+  .races-table td:nth-child(3) { grid-column: 3; grid-row: 1; max-width: 116px; }
+  .races-table td:nth-child(3) .wx-line { white-space: normal; }
+  .races-table td:nth-child(4) { grid-column: 3; grid-row: 2; font-size: 12px; color: var(--text-secondary); }
+  .races-table td:nth-child(5) { grid-column: 3; grid-row: 3; }
+  .races-table td:nth-child(5) .link-btn { padding: 4px 0 4px 10px; }
+  #records th, #records td, #predictions th, #predictions td { padding: 8px 4px; }
+  #records th:nth-child(3), #records td:nth-child(3), #records th:nth-child(4), #records td:nth-child(4),
+  #predictions th:nth-child(3), #predictions td:nth-child(3) { display: none; }
+  small.m-only { display: block; font-size: 11px; color: var(--muted); font-weight: 500; font-family: var(--font-ui); }
+
+  /* activities: name and kind on one line, the numbers under them */
+  #activities, #activities tbody { display: block; }
+  #activities thead { display: none; }
+  #activities tr { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px; padding: 9px 2px; border-bottom: 1px solid var(--grid); }
+  #activities td { display: block; padding: 0; border: 0; font-size: 12px; color: var(--text-secondary); }
+  #activities td.name { flex: 1 1 0; min-width: 0; max-width: none; font-size: 14px; color: var(--text-primary); order: -1; }
+  #activities td.kind-cell { order: -1; }
+  #activities tr::before { content: ""; flex-basis: 100%; height: 0; margin-top: -3px; }  /* line break after the name and kind */
+  #activities td:nth-child(8), #activities td:nth-child(9) { display: none; }
+
+  /* dialogs and the coach sheet */
+  dialog.sheet, dialog.pacing { width: calc(100vw - 20px); max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px); }
+  .sheet-form { padding: 16px; }
+  .pace-table td, .pace-table th { padding: 8px 5px; white-space: normal; }
+  .pace-table td:last-child { font-size: 12px; color: var(--text-secondary); }
+  .strength-hint .link-btn { padding: 6px 0; }
+  .coach-head { padding-left: 14px; padding-right: 14px; }
+  .coach-head-actions button { padding: 6px 11px; }
+  .coach-body { padding: 12px; }
+  .coach-form { padding-left: 12px; padding-right: 12px; }
+  .msg { max-width: 96%; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- printing the pacing card ---------- */
 @media print {

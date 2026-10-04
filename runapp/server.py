@@ -14,14 +14,28 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel, Field
 
-from . import analysis, auth, coach, config, db, form, plan, races, status, sync, workouts, zones
+from . import analysis, auth, coach, config, db, form, garmin_workouts, plan, races, status, strength, sync, workouts, zones
 
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Running app")
 # The data and app code are text that shrinks 4-7x, which matters on a phone connection.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+class AppFiles(StaticFiles):
+    """The app's own code and styles: browsers re-check them on every load (a cheap "not modified"),
+    so an update shows up right away. Without this they guess how long a copy stays good, and a
+    phone can run old code for hours. Vendor libraries carry their version in the file name."""
+
+    async def get_response(self, path, scope):
+        res = await super().get_response(path, scope)
+        if not path.startswith("vendor/"):
+            res.headers["Cache-Control"] = "no-cache"
+        return res
+
+
+app.mount("/static", AppFiles(directory=STATIC), name="static")
 
 # Reachable without logging in: the login page and what it (and the home-screen icon) needs.
 PUBLIC_PATHS = {"/login", "/api/login", "/manifest.webmanifest", "/sw.js", "/static/style.css", "/static/login.js"}
@@ -69,7 +83,7 @@ async def require_login(request: Request, call_next):
 
 @app.get("/login")
 def login_page():
-    return FileResponse(STATIC / "login.html")
+    return FileResponse(STATIC / "login.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js")
@@ -150,7 +164,7 @@ _sync_lock = threading.Lock()
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/dashboard")
@@ -310,7 +324,7 @@ def save_coach_notes(body: NotesIn):
 
 class SessionIn(BaseModel):
     date: IsoDate
-    kind: str = Field(pattern="^(easy|long|threshold|intervals|race|rest|cross)$")
+    kind: str = Field(pattern="^(easy|long|threshold|intervals|race|rest|cross|strength)$")
     title: str = Field(max_length=300)
     details: str = Field(default="", max_length=2000)
 
@@ -337,6 +351,95 @@ def save_plan(body: PlanIn):
         return plan.with_actuals(conn)
     finally:
         conn.close()
+
+
+# ---------- strength plan ----------
+class StrengthIn(BaseModel):
+    per_week: int = Field(ge=1, le=strength.MAX_PER_WEEK)
+    equipment: str = Field(pattern="^(bodyweight|dumbbells|gym)$")
+    start: IsoDate
+
+
+@app.put("/api/strength")
+def set_up_strength(body: StrengthIn):
+    """Save the settings and (re)place the upcoming strength sessions around the runs."""
+    conn = db.connect()
+    try:
+        strength.set_up(conn, body.per_week, body.equipment, body.start)
+        return plan.with_actuals(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/strength/refit")
+def refit_strength():
+    conn = db.connect()
+    try:
+        strength.refit(conn)
+        return plan.with_actuals(conn)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/strength")
+def remove_strength():
+    conn = db.connect()
+    try:
+        strength.remove(conn)
+        return plan.with_actuals(conn)
+    finally:
+        conn.close()
+
+
+class StrengthLogIn(BaseModel):
+    date: IsoDate
+    done: bool
+
+
+@app.post("/api/strength/log")
+def log_strength(body: StrengthLogIn):
+    conn = db.connect()
+    try:
+        strength.log(conn, body.date, body.done)
+        return plan.with_actuals(conn)
+    finally:
+        conn.close()
+
+
+# ---------- sending planned runs to Garmin ----------
+def _garmin_workout(day: str, action) -> dict:
+    """Run one step of build / send / remove for a day's workout and answer with the plan."""
+    if config.DEMO:
+        raise HTTPException(400, "Sending to Garmin is disabled while viewing demo data.")
+    conn = db.connect()
+    try:
+        action(conn)
+        return plan.with_actuals(conn)
+    except garmin_workouts.GarminWorkoutError as e:
+        raise HTTPException(409, str(e)) from e
+    except (sync.NotLoggedIn, sync.GarminUnreachable) as e:
+        raise HTTPException(503, str(e)) from e
+    finally:
+        conn.close()
+
+
+@app.post("/api/garmin/workouts/{day}/build")
+def build_garmin_workout(day: IsoDate):
+    """Convert that day's planned run into watch steps. Nothing is sent yet."""
+    return _garmin_workout(day, lambda conn: garmin_workouts.build(conn, day))
+
+
+@app.post("/api/garmin/workouts/{day}/send")
+def send_garmin_workout(day: IsoDate):
+    return _garmin_workout(day, lambda conn: garmin_workouts.send(conn, sync.login(interactive=False), day))
+
+
+@app.delete("/api/garmin/workouts/{day}")
+def remove_garmin_workout(day: IsoDate, sent: bool = False):
+    """sent=true takes it off Garmin as well; otherwise only an unsent draft is dropped."""
+    if not sent:
+        return _garmin_workout(day, lambda conn: garmin_workouts.discard(conn, day))
+    return _garmin_workout(day, lambda conn: garmin_workouts.remove(conn, sync.login(interactive=False), day))
 
 
 @app.get("/api/status")

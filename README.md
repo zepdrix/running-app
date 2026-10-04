@@ -67,7 +67,7 @@ Everything lives in `data/` (gitignored):
 | `data/auth.json` | The app password, as a salted scrypt hash (only if you set one). |
 | `data/raw/activities/<id>/` | Untouched Garmin responses: `summary.json`, `splits.json`, `hr_zones.json`, and `original.zip` (the FIT file from your watch) |
 | `data/raw/snapshots/` | Daily copies of Garmin's race predictions and personal records |
-| `data/runapp.db` | SQLite database. Garmin data: `activities`, per-second `samples`, `laps`, `best_efforts`, `activity_weather`, `wellness`, `vo2max_daily`, `snapshots`. Yours: `goals`, `races`, `plan_sessions`, `plan_proposals`, `coach_messages`, `coach_state` (notes, max HR). Derived: `form_stats`, `status_reports`. Housekeeping: `sync_log`, `auth_sessions`. The full schema is in `runapp/db.py`. |
+| `data/runapp.db` | SQLite database. Garmin data: `activities`, per-second `samples`, `laps`, `best_efforts`, `activity_weather`, `wellness`, `vo2max_daily`, `snapshots`. Yours: `goals`, `races`, `plan_sessions`, `plan_proposals`, `strength_log`, `garmin_workouts`, `coach_messages`, `coach_state` (notes, max HR, strength settings). Derived: `form_stats`, `status_reports`. Housekeeping: `sync_log`, `auth_sessions`. The full schema is in `runapp/db.py`. |
 
 All activity types are saved; only runs (any Garmin type containing "run") feed the analysis. The raw files
 are the source of truth, so the database can be rebuilt if the analysis changes.
@@ -94,7 +94,7 @@ installed and you've logged in once by running `claude` in a terminal.
   usage limits.
 - **Conversations:** saved in the database. **New conversation** clears the current one.
 
-## Workouts, races and plan changes
+## Workouts, races, strength and plan changes
 
 - **Workouts**: every threshold and interval session split into reps (from your laps: 45+ seconds and within 15%
   of the session's fastest lap). Each rep is judged by its average HR: ✓ zone 3 or below is controlled sub-threshold
@@ -117,8 +117,25 @@ installed and you've logged in once by running `claude` in a terminal.
   160 about 6%, 180 about 10%. "Heat-adjusted" numbers (efficiency, pace at 160 bpm, race times, race-based
   predictions) remove that cost, so summer and winter runs compare fairly. Wind isn't adjusted for, since it depends
   on the route. Runs whose weather report has no dew point or humidity are left unadjusted.
+- **Strength** (Plan view): choose sessions a week, your equipment and a start date, and the app writes strength
+  sessions into the plan next to your runs. Two routines alternate (A: legs and calves, B: hips and hamstrings) and
+  progress in three phases: Intro (weeks 1-3, 2 easy sets), Build (weeks 4-7, 3 sets), Strong (week 8 on, heavier).
+  Placement: after a threshold or interval run or on an easy day; never the day before a hard or long run, on a
+  rest day, or two days in a row; before an all-out race only light sessions in the last week and nothing in the
+  last 3 days or the 2 days after (2 days before and 1 after any other race). Past the end of your running plan it
+  follows the weekdays your hard runs usually fall on. When the runs move, the card lists the sessions that no
+  longer fit and **Refit to runs** re-places the upcoming ones; past sessions are never touched. Tick a session
+  off with **Mark done**; a strength activity recorded on the watch counts by itself.
+- **Send to Garmin** (Plan view): each upcoming run has a **Send to Garmin…** button. It converts the session text
+  into watch steps (reps, recoveries, heart-rate or pace targets) and shows them first; **Send to Garmin** then puts
+  the workout in your Garmin Connect library and on your Garmin calendar for that day, and the watch gets it on its
+  next sync. Warm-ups and cool-downs always end when you press Lap, never on a timer; the planned duration is kept
+  as the step's note. Heart-rate targets are sent as bpm ranges and pace targets per mile. **Remove from Garmin**
+  deletes it there again. If you edit the session afterwards, the app says the watch has the old version. Strength
+  sessions, rest days and races aren't sent.
 - **Plan changes from the coach**: ask the coach to change your plan and it proposes dated changes. Nothing changes
-  until you click **Apply** (in the chat or on the Plan view).
+  until you click **Apply** (in the chat or on the Plan view). Runs and strength change separately: moving a run
+  leaves the strength session beside it.
 
 ## How the numbers are computed
 

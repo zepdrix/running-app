@@ -241,3 +241,17 @@ def test_race_run_today_counts_once_its_result_is_in(conn):
     races.link_activities(conn, date(2026, 10, 11))
     d = races.all_races(conn, today=date(2026, 10, 11))
     assert d["upcoming"] == [] and d["past"][0]["is_pr"]
+
+
+def test_app_files_are_rechecked_on_every_load(tmp_path, monkeypatch):
+    """Without this a phone keeps running old code for as long as its browser guesses the copy is still good."""
+    from fastapi.testclient import TestClient
+
+    from runapp.server import app
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
+    client = TestClient(app)
+    for path in ("/", "/static/app.js", "/static/style.css", "/sw.js", "/login"):
+        assert client.get(path).headers["cache-control"] == "no-cache", path
+    vendor = client.get("/static/vendor/marked-12.0.2.min.js")  # versioned by name: may be kept
+    assert vendor.status_code == 200 and "cache-control" not in vendor.headers

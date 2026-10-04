@@ -96,6 +96,7 @@ const ICONS = {
   gauge: '<path d="M12 14 15.5 10.5"/><path d="M3.3 17a9 9 0 1 1 17.4 0"/>',
   wind: '<path d="M9.6 4.6A2 2 0 1 1 11 8H2M12.6 19.4A2 2 0 1 0 14 16H2M17.5 8a2.5 2.5 0 1 1 2 4H2"/>',
   shoe: '<path d="M3 17h17a2 2 0 0 0 2-2v-.5a2.5 2.5 0 0 0-2-2.45L15 11l-3-4H9v2H6V6H3z"/><path d="M3 17v2h19v-2M11.5 9l-1.5 1.5M13.5 11.5 12 13"/>',
+  dumbbell: '<path d="M6.5 6.5v11M3.5 9.5v5M17.5 6.5v11M20.5 9.5v5M6.5 12h11"/>',
   leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z"/><path d="M2 21c0-3 1.9-5.4 5.2-6"/>',
 };
 const icon = (name) =>
@@ -115,6 +116,7 @@ const KINDS = {
   race: { label: "Race", color: "--c-race" },
   cross: { label: "Cross-training", color: "--c-cross" },
   rest: { label: "Rest", color: "--c-rest" },
+  strength: { label: "Strength", color: "--c-strength" }, // not a run: sits beside the day's run
 };
 const RUN_KINDS = ["easy", "long", "threshold", "intervals", "race"];
 const kindChip = (k) => `<span class="kind k-${KINDS[k] ? k : "easy"}">${(KINDS[k] || KINDS.easy).label}</span>`;
@@ -519,22 +521,23 @@ function renderMonthly(months) {
 // ---------- tables ----------
 function renderRecords(records) {
   const paceOf = (r, d) => (r ? `${fmtPace(d / r.time_s)}` : "–");
+  const bestDate = (r) => dayOf(r.all_time.date).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
   document.getElementById("records").innerHTML = `
     <thead><tr><th>Distance</th><th>All-time best</th><th>Pace ${PACE_UNIT}</th><th>Date</th><th>Last 90 days</th></tr></thead>
     <tbody>${records
       .map((r) => {
         const fresh = r.recent && r.all_time && r.recent.activity_id === r.all_time.activity_id;
         return `<tr><td class="race-label">${r.label}</td>
-        <td>${r.all_time ? `<span class="strong" title="${esc(r.all_time.name)}">${fmtTime(r.all_time.time_s)}</span>` : "–"}</td>
+        <td>${r.all_time ? `<span class="strong" title="${esc(r.all_time.name)}">${fmtTime(r.all_time.time_s)}</span><small class="m-only">${paceOf(r.all_time, r.distance_m)}${PACE_UNIT} · ${bestDate(r)}</small>` : "–"}</td>
         <td>${paceOf(r.all_time, r.distance_m)}</td>
-        <td>${r.all_time ? dayOf(r.all_time.date).toLocaleDateString(undefined, { month: "short", year: "2-digit" }) : "–"}</td>
+        <td>${r.all_time ? bestDate(r) : "–"}</td>
         <td>${fresh ? `<span class="pill warn">★ New PR</span>` : r.recent ? fmtTime(r.recent.time_s) : "–"}</td></tr>`;
       })
       .join("")}</tbody>`;
 }
 
 function renderPredictions(preds) {
-  const cell = (p) => (p ? `<span class="strong">${fmtTime(p.time_s)}</span>` : "–");
+  const cell = (p, d) => (p ? `<span class="strong">${fmtTime(p.time_s)}</span><small class="m-only">${fmtPace(d / p.time_s)}/mi</small>` : "–");
   const basis = preds.find((p) => p.from_race)?.from_race.from;
   document.getElementById("pred-sub").textContent = basis
     ? `From races: based on ${basis}, converted to cool-weather conditions where heat slowed you. From training: best efforts in the last 90 days.`
@@ -542,12 +545,13 @@ function renderPredictions(preds) {
   document.getElementById("predictions").innerHTML = `
     <thead><tr><th>Race</th><th>From races</th><th>Pace</th><th>Training</th><th>Garmin</th></tr></thead>
     <tbody>${preds
-      .map((p) => `<tr><td class="race-label">${p.label}</td><td>${cell(p.from_race)}</td>
+      .map((p) => `<tr><td class="race-label">${p.label}</td><td>${cell(p.from_race, p.distance_m)}</td>
         <td>${p.from_race ? `${fmtPace(p.distance_m / p.from_race.time_s)}/mi` : "–"}</td>
         <td>${p.riegel ? fmtTime(p.riegel.time_s) : "–"}</td><td>${fmtTime(p.garmin_s)}</td></tr>`)
       .join("")}</tbody>`;
 }
 
+const unitTag = (text) => `<span class="m-only">${text}</span>`; // shown on phones, where tables lose their headings
 function renderActivities(acts) {
   const el = document.getElementById("activities");
   document.getElementById("kind-legend").innerHTML = acts.length ? kindLegend([...RUN_KINDS, "cross"]) : "";
@@ -560,9 +564,10 @@ function renderActivities(acts) {
     <tbody>${acts
       .map((a) => `<tr><td class="name"><a href="https://connect.garmin.com/modern/activity/${a.id}" target="_blank" rel="noopener">${esc(a.name) || "Untitled"}</a></td>
         <td class="kind-cell">${a.kind === "cross" ? `<span class="kind k-cross">${esc((a.type || "Other").replace(/_/g, " "))}</span>` : kindChip(a.kind)}</td>
-        <td>${fmtDate(a.start_local)}</td>
-        <td>${a.distance_m ? fmtDist(a.distance_m, 2) : "–"}</td><td>${fmtTime(a.duration_s)}</td>
-        <td>${a.is_run ? fmtPace(a.avg_speed_mps) : "–"}</td><td>${a.avg_hr ? Math.round(a.avg_hr) : "–"}</td>
+        <td>${shortDate(a.start_local.slice(0, 10))}<span class="m-hide">, ${a.start_local.slice(0, 4)}</span></td>
+        <td class="${a.distance_m ? "" : "m-hide"}">${a.distance_m ? `${fmtDist(a.distance_m, 2)}${unitTag(` ${unitLabel()}`)}` : "–"}</td><td>${fmtTime(a.duration_s)}</td>
+        <td class="${a.is_run ? "" : "m-hide"}">${a.is_run ? `${fmtPace(a.avg_speed_mps)}${unitTag(PACE_UNIT)}` : "–"}</td>
+        <td class="${a.avg_hr ? "" : "m-hide"}">${a.avg_hr ? `${Math.round(a.avg_hr)}${unitTag(" bpm")}` : "–"}</td>
         <td title="${esc(heatText(a.weather))}">${a.weather ? `${wxShort(a.weather)}${a.weather.heat_cost_pct >= 1 ? ` <span class="pill warn">+${a.weather.heat_cost_pct.toFixed(0)}%</span>` : ""}` : "–"}</td>
         <td>${a.training_load != null ? Math.round(a.training_load) : "–"}</td></tr>`)
       .join("")}</tbody>`;
@@ -751,14 +756,42 @@ const coachPanel = document.getElementById("coach");
 const coachOpen = document.getElementById("coach-open");
 function setCoachOpen(open) {
   coachPanel.classList.toggle("open", open);
+  document.documentElement.classList.toggle("coach-open", open); // stops the page behind from scrolling
   coachOpen.hidden = open;
+  fitCoach();
   if (open) {
     coachLog.scrollTop = coachLog.scrollHeight;
-    coachForm.message.focus();
+    // On a touch screen, focusing would pop the keyboard up over the conversation you came to read.
+    if (!matchMedia("(pointer: coarse)").matches) coachForm.message.focus();
   }
 }
 coachOpen.addEventListener("click", () => setCoachOpen(true));
 document.getElementById("coach-close").addEventListener("click", () => setCoachOpen(false));
+// The tab bar stays visible under the coach: tapping any tab also leaves the coach.
+document.querySelector(".tabs").addEventListener("click", (e) => {
+  if (e.target.closest("button[data-tab]") && coachPanel.classList.contains("open")) setCoachOpen(false);
+});
+
+// The coach sheet ends where the tab bar begins.
+const rail = document.querySelector(".rail");
+const measureRail = () => document.documentElement.style.setProperty("--rail-h", `${rail.offsetHeight}px`);
+measureRail();
+window.addEventListener("resize", measureRail);
+
+// iPhone keyboard: iOS doesn't shrink the page for it, it slides the page up, which would push the top of
+// the sheet (and its close button) off the screen. So while the keyboard is up, pin the sheet to the part
+// of the screen that's actually visible.
+function fitCoach() {
+  const vv = window.visualViewport;
+  const keyboardUp = vv && coachPanel.classList.contains("open") && matchMedia("(max-width: 980px)").matches
+    && vv.height < window.innerHeight - 120;
+  if (keyboardUp) Object.assign(coachPanel.style, { top: `${vv.offsetTop}px`, height: `${vv.height}px`, bottom: "auto" });
+  else ["top", "height", "bottom"].forEach((p) => coachPanel.style.removeProperty(p));
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", fitCoach);
+  window.visualViewport.addEventListener("scroll", fitCoach);
+}
 document.addEventListener("keydown", (e) => e.key === "Escape" && coachPanel.classList.contains("open") && setCoachOpen(false));
 
 
@@ -805,9 +838,112 @@ function actualCell(s) {
   return `<div class="actual-list">${STATE_PILL[s.state] || ""}${acts}</div>`;
 }
 
+// A strength session: its exercises fold away under a one-line summary; today's and the next one start open.
+function exerciseList(s) {
+  if (!s.exercises || !s.exercises.length) return s.details ? `<div class="w-details">${esc(s.details)}</div>` : "";
+  const [head, ...notes] = s.notes;
+  const next = planData.strength && planData.strength.next;
+  const open = s.date === isoToday() || (next && next.date === s.date);
+  const items = s.exercises
+    .map((e) => `<li><span class="ex-name">${esc(e.name)}</span><span class="ex-dose">${esc(e.dose)}</span>${e.cue ? `<span class="ex-cue">${esc(e.cue)}</span>` : ""}</li>`)
+    .join("");
+  return `<details class="exercises"${open ? " open" : ""}>
+    <summary>${esc(head || `${s.exercises.length} exercises`)}</summary>
+    ${notes.map((n) => `<p class="ex-note">${esc(n)}</p>`).join("")}<ul class="ex-list">${items}</ul></details>`;
+}
+
+// Strength is ticked off by hand (or by a strength activity recorded on the watch).
+function strengthActual(s) {
+  if (s.state === "upcoming") return "";
+  const acts = (s.actual || []).map((a) => `<div class="act"><span>${esc(a.name || "Strength")}${a.duration_s ? ` · ${fmtTime(a.duration_s)}` : ""}</span></div>`).join("");
+  const button = s.state === "done"
+    ? (s.logged ? `<button type="button" class="link-btn" data-strength-log="${esc(s.date)}" data-done="0">Undo</button>` : "")
+    : `<button type="button" class="mini" data-strength-log="${esc(s.date)}" data-done="1">Mark done</button>`;
+  return `<div class="strength-state">${STATE_PILL[s.state] || ""}${acts}${button}</div>`;
+}
+
+// ---------- planned runs on the watch ----------
+// A run's steps as the watch will show them. Warm-ups and cool-downs always end on the Lap button.
+function stepDistance(m) {
+  const mi = m / (1000 * KM_PER_MI);
+  if (Math.abs(mi - Math.round(mi)) < 0.005 && mi >= 1) return `${Math.round(mi)} mi`;
+  return m < 1000 ? `${m} m` : `${+(m / 1000).toFixed(2)} km`;
+}
+function watchStep(st) {
+  if (st.type === "repeat") {
+    return `<li class="ws-repeat"><span class="ws-times">${st.times} ×</span><ul class="watch-steps">${st.steps.map(watchStep).join("")}</ul></li>`;
+  }
+  const name = { warmup: "Warm-up", run: "Run", recover: "Recover", cooldown: "Cool-down" }[st.type];
+  const length = st.duration_s ? fmtTime(st.duration_s) : st.distance_m ? stepDistance(st.distance_m) : "until you press Lap";
+  const target = st.hr_low ? `HR ${st.hr_low}–${st.hr_high}` : st.pace_fast ? `${fmtTime(st.pace_fast)}–${fmtTime(st.pace_slow)}${PACE_UNIT}` : "";
+  return `<li class="ws-${st.type}"><span class="ws-name">${name}</span><span class="ws-length">${length}</span>${target ? `<span class="ws-target">${target}</span>` : ""}
+    ${st.note ? `<span class="ws-note">${esc(st.note)}</span>` : ""}</li>`;
+}
+function garminBlock(s, today) {
+  const g = s.garmin;
+  if (!g) return "";
+  const day = esc(s.date);
+  if (g.state === "none") {
+    return s.date >= today ? `<div class="garmin-row"><button type="button" class="mini" data-garmin="build" data-day="${day}">⌚ Send to Garmin…</button></div>` : "";
+  }
+  const steps = `<ul class="watch-steps">${g.steps.map(watchStep).join("")}</ul>`;
+  const changed = g.changed ? `<p class="garmin-note warn">! The plan changed after these steps were made${g.state === "sent" ? ", so your watch has the old version. Remove it and send again." : ". Rebuild them."}</p>` : "";
+  if (g.state === "draft") {
+    return `<details class="garmin-steps" open><summary>Watch steps · not sent yet</summary>${changed}${steps}
+      <div class="garmin-actions"><button type="button" class="primary mini" data-garmin="send" data-day="${day}">Send to Garmin</button>
+        <button type="button" class="mini" data-garmin="build" data-day="${day}">Rebuild</button>
+        <button type="button" class="link-btn" data-garmin="discard" data-day="${day}">Discard</button></div></details>`;
+  }
+  const where = g.scheduled ? "on your Garmin calendar" : "in your Garmin workout library (not on the calendar)";
+  return `<details class="garmin-steps"><summary><span class="pill good">⌚ On Garmin</span> ${g.changed ? '<span class="pill warn">! Plan changed</span>' : ""}</summary>${changed}
+    <p class="garmin-note">It's ${where}. Sync your watch to get it.</p>${steps}
+    <div class="garmin-actions"><button type="button" class="mini" data-garmin="remove" data-day="${day}">Remove from Garmin</button></div></details>`;
+}
+
+const GARMIN_ACTIONS = {
+  build: { method: "POST", path: "build", busy: "Working out the steps… (about 20 seconds)", done: "Check the steps, then send them to Garmin." },
+  send: { method: "POST", path: "send", busy: "Sending to Garmin…", done: "Sent. It's on your Garmin calendar: sync your watch to get it." },
+  discard: { method: "DELETE", path: "", busy: "Discarding…", done: "" },
+  remove: { method: "DELETE", path: "?sent=true", busy: "Removing from Garmin…", done: "Removed from Garmin." },
+};
+let garminBusy = false;
+async function garminAction(button) {
+  if (garminBusy) return;
+  const a = GARMIN_ACTIONS[button.dataset.garmin];
+  if (button.dataset.garmin === "remove" && !confirm("Remove this workout from Garmin? It leaves your Garmin calendar and workout library.")) return;
+  garminBusy = true;
+  button.disabled = true;
+  planEl.saved.textContent = a.busy;
+  const url = `/api/garmin/workouts/${button.dataset.day}${a.path.startsWith("?") ? a.path : a.path ? `/${a.path}` : ""}`;
+  let message = a.done;
+  try {
+    const res = await fetch(url, { method: a.method });
+    if (res.ok) {
+      const scroll = planEl.table.scrollTop;
+      planData = await res.json();
+      renderPlan();
+      planEl.table.scrollTop = scroll;
+    } else {
+      message = (await res.json().catch(() => ({}))).detail || "That didn't work. Try again.";
+      loadPlan(); // a send can half-succeed (in the library but not on the calendar): show where it stands
+    }
+  } catch {
+    message = "Couldn't reach the app on your Mac.";
+  } finally {
+    garminBusy = false;
+    button.disabled = false;
+  }
+  planEl.saved.textContent = message;
+}
+planEl.table.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-garmin]");
+  if (b) garminAction(b);
+});
+
 function renderPlanView() {
   const sessions = planData.sessions;
   const today = isoToday();
+  const strength = planData.strength;
   planEl.actions.innerHTML = `<button type="button" id="plan-edit">${sessions.length ? "Edit plan" : "Create plan"}</button>`;
   document.getElementById("plan-edit").addEventListener("click", () => { planEditing = true; renderPlan(); });
 
@@ -816,12 +952,14 @@ function renderPlanView() {
     planEl.table.innerHTML = `<div class="plan-empty">No sessions planned yet. Click <b>Create plan</b>, or ask the coach to suggest one and enter it here.</div>`;
   } else {
     // Summary: this week's progress and the next race.
-    const thisWeek = sessions.filter((s) => mondayOf(s.date) === mondayOf(today) && s.kind !== "rest");
+    const thisWeek = sessions.filter((s) => mondayOf(s.date) === mondayOf(today) && s.kind !== "rest" && s.kind !== "strength");
     const doneThisWeek = thisWeek.filter((s) => s.state === "done" || s.state === "harder").length;
     const nextRace = sessions.find((s) => s.kind === "race" && s.date >= today);
     const daysTo = nextRace ? Math.round((dayOf(nextRace.date) - dayOf(today)) / 864e5) : null;
     planEl.summary.innerHTML = [
       thisWeek.length ? `<span class="metric" style="--m:${css("--c-easy")}">This week <b>${doneThisWeek}/${thisWeek.length}</b> sessions done</span>` : "",
+      strength && strength.enabled && strength.this_week.planned
+        ? `<span class="metric" style="--m:${css("--c-strength")}">Strength <b>${strength.this_week.done}/${strength.this_week.planned}</b> this week</span>` : "",
       nextRace ? `<span class="metric" style="--m:${css("--c-race")}">Next race <b>${esc(nextRace.title)}</b> ${daysTo === 0 ? "today" : `in ${daysTo} day${daysTo === 1 ? "" : "s"}`}</span>` : "",
     ].join("");
 
@@ -831,19 +969,29 @@ function renderPlanView() {
       .map(([monday, list]) => {
         const quality = list.filter((s) => ["threshold", "intervals", "race"].includes(s.kind)).length;
         const current = monday === mondayOf(today);
+        const lifts = list.filter((s) => s.kind === "strength").length;
+        const runs = list.filter((s) => s.kind !== "rest" && s.kind !== "strength").length;
         const rows = list
-          .map((s) => {
-            const cls = [s.date < today ? "past" : "", s.date === today ? "today" : "", s.kind === "race" ? "race-day" : ""].join(" ");
+          .map((s, i) => {
+            const lift = s.kind === "strength";
+            // A second session on the same day (usually strength after the run) reads as one block with the first.
+            const sameDay = i > 0 && list[i - 1].date === s.date;
+            const more = list[i + 1] && list[i + 1].date === s.date;
+            const cls = [s.date < today ? "past" : "", s.date === today ? "today" : "", s.kind === "race" ? "race-day" : "",
+              lift ? "strength-row" : "", more ? "has-strength" : ""].join(" ");
             return `<tr class="${cls}">
-              <td class="day"><b>${dayOf(s.date).toLocaleDateString(undefined, { weekday: "short" })}</b><span>${shortDate(s.date)}</span></td>
-              <td class="type">${kindChip(s.kind)}</td>
-              <td><div class="w-title">${esc(s.title)}</div>${s.details ? `<div class="w-details">${esc(s.details)}</div>` : ""}</td>
-              <td class="actual">${actualCell(s)}</td></tr>`;
+              <td class="day">${sameDay ? "" : `<b>${dayOf(s.date).toLocaleDateString(undefined, { weekday: "short" })}</b><span>${shortDate(s.date)}</span>`}</td>
+              ${lift
+                // Strength spans the row, so the exercise list gets the full width (it matters on a phone).
+                ? `<td colspan="3"><div class="strength-head">${kindChip(s.kind)}<div class="w-title">${esc(s.title)}</div>${strengthActual(s)}</div>${exerciseList(s)}</td>`
+                : `<td class="type">${kindChip(s.kind)}</td>
+              <td${s.state === "upcoming" ? ' colspan="2"' : ""}><div class="w-title">${esc(s.title)}</div>${s.details ? `<div class="w-details">${esc(s.details)}</div>` : ""}${garminBlock(s, today)}</td>
+              ${s.state === "upcoming" ? "" : `<td class="actual">${actualCell(s)}</td>`}`}</tr>`; // nothing done yet: the workout gets the full width
           })
           .join("");
         return `<div class="plan-week${current ? " current" : ""}">
           <div class="plan-week-head"><h3>Week of ${shortDate(monday)}</h3>
-            <span class="muted">${list.filter((s) => s.kind !== "rest").length} sessions · ${quality} quality${current ? " · this week" : ""}</span></div>
+            <span class="muted">${runs} session${runs === 1 ? "" : "s"} · ${quality} quality${lifts ? ` · ${lifts} strength` : ""}${current ? " · this week" : ""}</span></div>
           <div class="table-wrap"><table class="plan-table">
             <thead><tr><th>Day</th><th>Type</th><th>Workout</th><th>What you did</th></tr></thead>
             <tbody>${rows}</tbody></table></div></div>`;
@@ -853,15 +1001,132 @@ function renderPlanView() {
   planEl.notes.innerHTML = planData.notes
     ? renderMarkdown(planData.notes)
     : `<div class="plan-empty">No notes yet. Races, training zones and rules go here.</div>`;
+  renderStrength();
 }
 
-const KIND_OPTIONS = ["easy", "long", "threshold", "intervals", "race", "rest", "cross"];
+// ---------- strength plan ----------
+const strengthCard = document.getElementById("strength-card");
+
+function strengthForm(st, submitLabel) {
+  const c = st.settings;
+  const option = (value, label, chosen) => `<option value="${esc(value)}"${chosen ? " selected" : ""}>${esc(label)}</option>`;
+  return `<form class="strength-form" id="strength-form">
+    <label>Sessions a week<select name="per_week">${[1, 2, 3].map((n) => option(n, n, n === c.per_week)).join("")}</select></label>
+    <label>Start<input type="date" name="start" value="${esc(c.start)}" required></label>
+    <label class="wide">Equipment<select name="equipment">${Object.entries(st.equipment).map(([k, v]) => option(k, v, k === c.equipment)).join("")}</select></label>
+    <div class="form-actions"><button type="submit" class="primary">${submitLabel}</button>${st.enabled ? `<button type="button" class="ghost danger" id="strength-remove">Remove strength plan</button>` : ""}</div>
+  </form>`;
+}
+
+function strengthPhases(st) {
+  let first = 1;
+  return `<div class="strength-phases">${st.phases
+    .map((p) => {
+      const weeks = p.weeks ? `Weeks ${first}–${first + p.weeks - 1}` : `Week ${first} on`;
+      first += p.weeks || 0;
+      const now = st.enabled && st.phase.label === p.label && !st.phase.starts_in_days;
+      return `<div class="${now ? "now" : ""}"><b>${esc(p.label)}</b>${weeks}<br>${p.sets} sets · ${p.minutes} min</div>`;
+    })
+    .join("")}</div>`;
+}
+
+function renderStrength() {
+  const st = planData.strength;
+  if (!st) {
+    // The page is newer than the running app (or this is a copy saved before strength existed).
+    strengthCard.innerHTML = `<div class="plan-empty">Restart the app on your Mac to turn on the strength plan.</div>`;
+    return;
+  }
+  const rules = `<ul class="strength-rules">${st.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>`;
+  if (!st.enabled) {
+    strengthCard.innerHTML = `
+      <p class="strength-intro">Two short sessions a week make you a more economical runner and help your legs take the training.</p>
+      ${strengthForm(st, "Add strength plan")}<div class="strength-msg muted" id="strength-msg"></div>
+      <h3 class="strength-sub">How it progresses</h3>${strengthPhases(st)}
+      <h3 class="strength-sub">Where sessions go</h3>${rules}`;
+    return;
+  }
+  const ph = st.phase;
+  const nextDay = st.next ? dayOf(st.next.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : null;
+  const metric = (text) => `<span class="metric" style="--m:${css("--c-strength")}">${text}</span>`;
+  const clash = st.issues.length
+    ? `<div class="strength-clash"><b>! ${st.issues.length} session${st.issues.length === 1 ? "" : "s"} no longer fit${st.issues.length === 1 ? "s" : ""} your runs</b>
+        <ul>${st.issues.map((i) => `<li>${shortDate(i.date)}: ${esc(i.reason)}</li>`).join("")}</ul>
+        <button type="button" class="primary" data-strength-refit>Refit to runs</button></div>`
+    : "";
+  strengthCard.innerHTML = `
+    <div class="strength-metrics">
+      ${ph.starts_in_days ? metric(`Starts <b>in ${ph.starts_in_days} day${ph.starts_in_days === 1 ? "" : "s"}</b>`) : metric(`Phase <b>${esc(ph.label)}</b> week ${ph.week}`)}
+      ${st.this_week.planned ? metric(`This week <b>${st.this_week.done}/${st.this_week.planned}</b> done`) : ""}
+      ${nextDay ? metric(`Next <b>${nextDay}</b>`) : ""}
+    </div>
+    ${clash}${strengthPhases(st)}
+    <details class="strength-settings"><summary>Settings</summary>
+      ${strengthForm(st, "Save and refit")}
+      <p class="strength-hint">Changed your runs? <button type="button" class="link-btn" data-strength-refit>Refit the upcoming sessions</button></p>
+    </details><div class="strength-msg muted" id="strength-msg"></div>
+    <h3 class="strength-sub">Where sessions go</h3>${rules}`;
+}
+
+// Every strength change answers with the whole plan, so the table and the card redraw together.
+async function strengthRequest(method, url, body, done) {
+  const logging = url.endsWith("/log");
+  const msg = document.getElementById("strength-msg");
+  let res;
+  try {
+    res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  } catch {
+    res = null;
+  }
+  if (!res || !res.ok) {
+    if (msg) msg.textContent = "Couldn't save that. Is the app running on your Mac?";
+    return;
+  }
+  const scroll = planEl.table.scrollTop;
+  planData = await res.json();
+  renderPlan();
+  planEl.table.scrollTop = scroll;
+  if (!logging) strengthCard.scrollTop = 0; // the card has changed: show its summary, not where the button was
+  if (done) planEl.saved.textContent = done;
+}
+
+strengthCard.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  strengthRequest("PUT", "/api/strength", { per_week: Number(f.per_week.value), equipment: f.equipment.value, start: f.start.value },
+    "Strength sessions placed around your runs. Refresh the Status card to include them.");
+});
+strengthCard.addEventListener("click", (e) => {
+  if (e.target.closest("[data-strength-refit]")) strengthRequest("POST", "/api/strength/refit", null, "Upcoming strength sessions refitted to your runs.");
+  if (e.target.closest("#strength-remove") && confirm("Remove the upcoming strength sessions? The ones already behind you stay in the plan.")) {
+    strengthRequest("DELETE", "/api/strength", null, "Strength plan removed.");
+  }
+});
+planEl.table.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-strength-log]");
+  if (b) strengthRequest("POST", "/api/strength/log", { date: b.dataset.strengthLog, done: b.dataset.done === "1" });
+});
+
+// Today view: the next strength session, under the next workout.
+const nextStrength = document.getElementById("st-strength");
+function renderNextStrength() {
+  const next = planData.strength && planData.strength.enabled ? planData.strength.next : null;
+  nextStrength.hidden = !next;
+  if (!next) return;
+  const days = Math.round((dayOf(next.date) - dayOf(isoToday())) / 864e5);
+  const when = days === 0 ? "Today" : days === 1 ? "Tomorrow" : dayOf(next.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const title = next.title.replace(/^(light )?strength /i, (m, light) => (light ? "Light " : ""));
+  nextStrength.innerHTML = `${kindChip("strength")}<b>${when}</b><small>${esc(title)}</small>`;
+}
+nextStrength.addEventListener("click", () => showTab("plan"));
+
+const KIND_OPTIONS = ["easy", "long", "threshold", "intervals", "race", "rest", "cross", "strength"];
 function editRow(s = {}) {
   return `<tr>
     <td><input type="date" name="date" value="${esc(s.date || "")}" required aria-label="Date"></td>
     <td><select name="kind" aria-label="Type">${KIND_OPTIONS.map((k) => `<option value="${k}"${k === (s.kind || "easy") ? " selected" : ""}>${KINDS[k].label}</option>`).join("")}</select></td>
     <td><input name="title" value="${esc(s.title || "")}" placeholder="e.g. 5×6 min sub-threshold, HR ≤160" aria-label="Workout"></td>
-    <td><textarea name="details" rows="1" placeholder="Warm-up, paces, notes" aria-label="Details">${esc(s.details || "")}</textarea></td>
+    <td><textarea name="details" rows="${Math.min(8, (s.details || "").split("\n").length)}" placeholder="Warm-up, paces, notes" aria-label="Details">${esc(s.details || "")}</textarea></td>
     <td class="del"><button type="button" title="Remove session" aria-label="Remove session">✕</button></td></tr>`;
 }
 
@@ -872,6 +1137,7 @@ function renderPlanEdit() {
     <thead><tr><th>Date</th><th>Type</th><th>Workout</th><th>Details</th><th></th></tr></thead>
     <tbody>${planData.sessions.map(editRow).join("")}</tbody></table></div>`;
   planEl.notes.innerHTML = `<textarea id="plan-notes-text" aria-label="Plan notes" placeholder="Races, zones, rules…">${esc(planData.notes)}</textarea>`;
+  strengthCard.innerHTML = `<div class="plan-empty">Strength sessions are rows in the table while you edit (one exercise per line: <code>Exercise | sets × reps | cue</code>). Save or cancel to change the strength settings.</div>`;
   const tbody = planEl.table.querySelector("tbody");
   tbody.addEventListener("click", (e) => e.target.closest(".del button") && e.target.closest("tr").remove());
   document.getElementById("plan-add").addEventListener("click", () => {
@@ -911,6 +1177,7 @@ function renderPlan() {
   planEl.saved.textContent = "";
   if (planEditing) renderPlanEdit();
   else renderPlanView();
+  renderNextStrength();
 }
 
 async function loadPlan() {
@@ -1216,8 +1483,12 @@ document.getElementById("wo-sessions").addEventListener("click", (e) => {
   const row = e.target.closest(".wo-row");
   if (!row) return;
   woSelected = Number(row.dataset.id);
+  const scroll = e.currentTarget.scrollTop;
   renderWorkoutList();
+  e.currentTarget.scrollTop = scroll;
   renderWorkoutDetail();
+  // On a phone the detail card sits below the list: bring it into view.
+  if (matchMedia("(max-width: 760px)").matches) document.querySelector(".wo-detail").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 function renderWorkoutTrend() {
@@ -1540,7 +1811,7 @@ function proposalCard(p) {
     .map((c) => {
       const d = dayOf(c.date);
       const was = c.current.length ? `<span class="p-was">${c.current.map((x) => `${KINDS[x.kind]?.label || x.kind}: ${esc(x.title)}`).join(" · ")}</span>` : "";
-      const what = c.op === "remove" ? `<span>Clear this day</span>` : `<span>${kindChip(c.kind)} <b>${esc(c.title)}</b></span>${c.details ? `<span class="p-details">${esc(c.details)}</span>` : ""}`;
+      const what = c.op === "remove" ? `<span>${c.kind === "strength" ? "Remove the strength session" : "Clear this day's run"}</span>` : `<span>${kindChip(c.kind)} <b>${esc(c.title)}</b></span>${c.details ? `<span class="p-details">${esc(c.details)}</span>` : ""}`;
       return `<li><span class="p-date">${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}<small>${OP_LABEL[c.op]}</small></span><span>${what}${was}</span></li>`;
     })
     .join("");
@@ -1698,7 +1969,7 @@ function renderForm() {
     ? `<table><thead><tr><th>Run</th><th>Pace</th><th>Contact</th><th>Cadence</th><th>V. ratio</th></tr></thead><tbody>${formData.fatigue
         .map((f) => `<tr><td class="run"><b>${dayOf(f.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</b>
             ${f.verdict === "fading" ? `<span class="pill warn" title="${esc(f.signs.join(", "))}">! Fading</span>` : '<span class="pill good">✓ Held</span>'}
-            <small title="${esc(f.name)}">${KINDS[f.kind]?.label || f.kind} · first vs last ${f.method.replace("first vs last ", "")}</small></td>
+            <small title="${esc(f.name)}">${KINDS[f.kind]?.label || f.kind}<span class="m-hide"> · first vs last ${f.method.replace("first vs last ", "")}</span></small></td>
           <td title="${fmtTime(f.pace_first)} → ${fmtTime(f.pace_last)}/mi">${f.pace_change_pct > 0 ? "+" : ""}${f.pace_change_pct}%</td>
           <td>${d(f.delta.gct, " ms", f.delta.gct >= t.gct_fade_ms)}</td>
           <td>${d(f.delta.cadence, "", f.delta.cadence <= -t.cadence_fade_spm, 1)}</td>

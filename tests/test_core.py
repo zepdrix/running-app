@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -313,7 +313,8 @@ def test_plan_api(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
     client = TestClient(app)
-    assert client.get("/api/plan").json() == {"notes": "", "sessions": []}
+    empty = client.get("/api/plan").json()
+    assert (empty["notes"], empty["sessions"], empty["strength"]["enabled"]) == ("", [], False)
     body = {"notes": " Zones ", "sessions": [{"date": "2026-10-06", "kind": "threshold", "title": "5x6 min", "details": ""}]}
     saved = client.put("/api/plan", json=body).json()
     assert saved["notes"] == "Zones" and saved["sessions"][0]["title"] == "5x6 min"
@@ -726,3 +727,330 @@ def test_form_api_and_treadmill_excluded_from_pace_bands(tmp_path, monkeypatch):
     form_run(c, 1, "2026-09-10 07:00:00", [(900, 660, 164, 292, 9.5, 50.4)], type_key="treadmill_running")
     r = TestClient(app).get("/api/form").json()
     assert r["by_band"]["easy"] == [] and len(r["balance"]) == 1  # treadmill pace isn't trusted; balance still counts
+
+
+# ---------- strength plan ----------
+def strength_days(conn):
+    from runapp import plan
+
+    return [(date.fromisoformat(s["date"]).strftime("%a %d"), s["title"]) for s in plan.get(conn)["sessions"] if s["kind"] == "strength"]
+
+
+RUN_PLAN = [
+    {"date": "2026-10-03", "kind": "rest", "title": "Rest"},
+    {"date": "2026-10-04", "kind": "easy", "title": "50 min easy"},
+    {"date": "2026-10-05", "kind": "easy", "title": "Easy run"},
+    {"date": "2026-10-06", "kind": "threshold", "title": "5x6 min"},
+    {"date": "2026-10-07", "kind": "easy", "title": "35 min easy"},
+    {"date": "2026-10-08", "kind": "intervals", "title": "4x1 km"},
+    {"date": "2026-10-09", "kind": "rest", "title": "Rest"},
+    {"date": "2026-10-10", "kind": "easy", "title": "20 min easy + strides"},
+    {"date": "2026-10-11", "kind": "race", "title": "Park 5k"},
+    {"date": "2026-10-12", "kind": "rest", "title": "Rest"},
+    {"date": "2026-10-13", "kind": "easy", "title": "30 min easy"},
+    {"date": "2026-10-14", "kind": "intervals", "title": "3x2 min"},
+    {"date": "2026-10-15", "kind": "easy", "title": "25 min easy"},
+    {"date": "2026-10-16", "kind": "rest", "title": "Rest"},
+    {"date": "2026-10-17", "kind": "easy", "title": "20 min easy + strides"},
+    {"date": "2026-10-18", "kind": "race", "title": "Croton 5k"},
+]
+
+
+def run_plan_with_tune_up(conn):
+    """Two race weeks: a controlled tune-up on the 11th, then an all-out 5k on the 18th."""
+    from runapp import plan, races
+
+    plan.save(conn, "", RUN_PLAN)
+    races.save(conn, {"date": "2026-10-11", "name": "Park 5k", "distance_m": 5000, "effort": "controlled"})
+
+
+def test_strength_fits_around_runs_and_races(conn):
+    from runapp import plan, strength
+
+    run_plan_with_tune_up(conn)
+    today = date(2026, 10, 3)
+    assert strength.refit(conn, today) == 0  # nothing until it's set up
+    strength.set_up(conn, 2, "bodyweight", "2026-10-03", today)
+    days = strength_days(conn)
+    # Sat 3 is a rest day; Mon 5 and Wed 7 are the day before hard runs; Tue 6 would make three in a week;
+    # Fri 9 - Mon 12 surround the tune-up; before the all-out race on the 18th only Wed 14 is free, and it's light.
+    assert days[:3] == [("Sun 04", "Strength A: legs & calves"), ("Thu 08", "Strength B: hips & hamstrings"),
+                        ("Wed 14", "Light strength A: legs & calves")]
+    # Past the end of the running plan it follows your usual hard days (Tue and Wed in this plan):
+    # Tue 20 is still within 2 days of the all-out race, so the first one is Wed 21.
+    assert [d for d, _ in days[3:5]] == ["Wed 21", "Sat 24"] and len(days) == 7
+    assert strength.issues(conn, today) == []
+
+    by_date = {s["date"]: s for s in plan.with_actuals(conn, today)["sessions"] if s["kind"] == "strength"}
+    first, light = by_date["2026-10-04"], by_date["2026-10-14"]
+    assert first["notes"][0] == "Intro, week 1 · about 20 min · after your run or later in the day"
+    assert first["exercises"][0] == {"name": "Bodyweight squat", "dose": "2 × 8", "cue": "Sit back and down, knees over toes, 3 s on the way down"}
+    assert len(first["exercises"]) == 5 and first["state"] == "upcoming"
+    assert light["notes"][0].startswith("Race week · about 12 min") and [e["dose"] for e in light["exercises"]][:2] == ["1 × 8", "1 × 8 each side"]
+    assert "Pogo hops" not in by_date["2026-10-14"]["details"]  # (routine A has none anyway) no jumping in race week
+    text = plan.as_text(conn)
+    assert "[strength]: Strength A: legs & calves. Intro, week 1 · about 20 min" in text and "Bodyweight squat 2 × 8;" in text
+    assert "knees over toes" not in text  # the coach gets the doses, not every cue
+
+
+def test_strength_progression_and_equipment():
+    from runapp import strength
+
+    start = date(2026, 10, 3)
+    assert [strength.phase_on(start, start + timedelta(days=n))["key"] for n in (0, 20, 21, 48, 49, 400)] == [
+        "intro", "intro", "build", "build", "strong", "strong"]
+    strong = strength.phase_on(start, start + timedelta(days=60))
+    gym = strength.parse_details(strength.session("A", strong, "gym")["details"])["exercises"]
+    assert (gym[0]["name"], gym[0]["dose"], gym[1]["dose"]) == ("Back squat", "4 × 5", "3 × 6 each side")
+    body = strength.parse_details(strength.session("B", strong, "bodyweight")["details"])
+    assert body["exercises"][0]["dose"] == "3 × 12 each side" and "4 s" in body["notes"][1]
+    light = strength.session("B", strong, "gym", light=True)
+    assert "Pogo hops" not in light["details"] and light["title"] == "Light strength B: hips & hamstrings"
+
+
+def test_strength_refit_keeps_the_past_and_flags_clashes(conn):
+    from runapp import plan, strength
+
+    run_plan_with_tune_up(conn)
+    strength.set_up(conn, 2, "dumbbells", "2026-10-03", date(2026, 10, 3))
+    assert plan.with_actuals(conn, date(2026, 10, 5))["sessions"][2]["state"] == "missed"  # Sun 4: nothing logged
+    strength.log(conn, "2026-10-04", True)
+    done = next(s for s in plan.with_actuals(conn, date(2026, 10, 5))["sessions"] if s["kind"] == "strength")
+    assert (done["state"], done["logged"]) == ("done", True)
+    strength.log(conn, "2026-10-04", False)
+    # A strength activity recorded on the watch ticks it off too, and shows on the strength row rather than the run's.
+    store.upsert_summary(conn, {"activityId": 7, "activityName": "Strength", "activityType": {"typeKey": "strength_training"},
+                                "startTimeLocal": "2026-10-04 18:00:00", "duration": 1200})
+    rows = [s for s in plan.with_actuals(conn, date(2026, 10, 5))["sessions"] if s["date"] == "2026-10-04"]
+    assert [(s["kind"], s["state"], len(s["actual"])) for s in rows] == [("easy", "missed", 0), ("strength", "done", 1)]
+
+    # The threshold run moves to Friday: Thursday's strength is now the day before a hard run.
+    conn.execute("UPDATE plan_sessions SET date = '2026-10-09', kind = 'threshold' WHERE date = '2026-10-08' AND kind = 'intervals'")
+    conn.execute("DELETE FROM plan_sessions WHERE date = '2026-10-09' AND kind = 'rest'")
+    conn.commit()
+    today = date(2026, 10, 6)
+    assert [(i["date"], i["reason"]) for i in strength.issues(conn, today)] == [("2026-10-08", "the next day is a hard run")]
+    assert plan.with_actuals(conn, today)["strength"]["issues"]
+    strength.refit(conn, today)
+    days = strength_days(conn)
+    assert days[0] == ("Sun 04", "Strength A: legs & calves")          # the past stays
+    assert days[1] == ("Tue 06", "Strength B: hips & hamstrings")      # after the hard run, alternating on from A
+    assert "Thu 08" not in [d for d, _ in days] and strength.issues(conn, today) == []
+
+    strength.remove(conn, today)
+    assert strength_days(conn) == [("Sun 04", "Strength A: legs & calves")] and strength.settings(conn) is None
+
+
+def test_strength_proposals_leave_the_run_alone(conn):
+    from runapp import plan
+
+    plan.save(conn, "", [{"date": "2026-10-06", "kind": "threshold", "title": "5x6 min"},
+                         {"date": "2026-10-06", "kind": "strength", "title": "Strength A: legs & calves", "details": "Squat | 2 × 8 | Slow"}])
+    pid = plan.propose(conn, "Easier day, strength moves", [
+        {"op": "set", "date": "2026-10-06", "kind": "easy", "title": "40 min easy"},
+        {"op": "remove", "date": "2026-10-06", "kind": "strength"},
+        {"op": "set", "date": "2026-10-08", "kind": "strength", "title": "Strength A: legs & calves", "details": "Squat | 2 × 8 | Slow"},
+    ])
+    (p,) = plan.proposals(conn)
+    assert p["changes"][0]["current"] == [{"kind": "threshold", "title": "5x6 min"}]
+    assert p["changes"][1]["current"] == [{"kind": "strength", "title": "Strength A: legs & calves"}]
+    plan.apply_proposal(conn, pid)
+    assert [(s["date"], s["kind"]) for s in plan.get(conn)["sessions"]] == [("2026-10-06", "easy"), ("2026-10-08", "strength")]
+    # Changing only the run keeps the strength session beside it.
+    plan.apply_proposal(conn, plan.propose(conn, "Rest", [{"op": "set", "date": "2026-10-08", "kind": "rest", "title": "Rest"},
+                                                         {"op": "remove", "date": "2026-10-06"}]))
+    assert [(s["date"], s["kind"]) for s in plan.get(conn)["sessions"]] == [("2026-10-08", "rest"), ("2026-10-08", "strength")]
+
+
+def test_strength_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runapp.server import app
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
+    client = TestClient(app)
+    today = date.today()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    assert client.put("/api/strength", json={"per_week": 5, "equipment": "gym", "start": tomorrow}).status_code == 422
+    assert client.put("/api/strength", json={"per_week": 2, "equipment": "anvil", "start": tomorrow}).status_code == 422
+    p = client.put("/api/strength", json={"per_week": 2, "equipment": "gym", "start": tomorrow}).json()
+    sessions = [s for s in p["sessions"] if s["kind"] == "strength"]
+    assert p["strength"]["enabled"] and p["strength"]["settings"]["equipment"] == "gym" and p["strength"]["phase"]["starts_in_days"] == 1
+    assert len(sessions) >= 6 and all(s["date"] >= tomorrow for s in sessions)  # two a week, at least four weeks out
+    first = sessions[0]["date"]
+    logged = client.post("/api/strength/log", json={"date": first, "done": True}).json()
+    assert next(s for s in logged["sessions"] if s["date"] == first)["state"] == "done"
+    # The plan editor round-trips strength sessions like any other.
+    body = {"notes": "", "sessions": [{k: s[k] for k in ("date", "kind", "title", "details")} for s in sessions]}
+    assert len(client.put("/api/plan", json=body).json()["sessions"]) == len(sessions)
+    assert len(client.post("/api/strength/refit").json()["sessions"]) == len(sessions)
+    gone = client.delete("/api/strength").json()
+    assert not gone["strength"]["enabled"] and gone["sessions"] == []
+
+
+# ---------- sending planned runs to Garmin ----------
+def raw_step(kind, **fields):
+    """A step as the conversion returns it: every field present, 0 or "" meaning none."""
+    return {"type": kind, "duration_s": 0, "distance_m": 0, "hr_low": 0, "hr_high": 0, "pace_fast": "", "pace_slow": "", "note": "",
+            "times": 0, "steps": [], **fields}
+
+
+THRESHOLD_STEPS = [
+    raw_step("warmup", duration_s=900),
+    raw_step("repeat", times=5, steps=[raw_step("run", duration_s=360, hr_high=160, pace_fast="7:39", pace_slow="8:19"),
+                                       raw_step("recover", duration_s=60)]),
+    raw_step("cooldown", duration_s=900, note="15 min easy"),
+]
+
+
+def test_garmin_steps_warmup_and_cooldown_end_on_the_lap_button():
+    from runapp import garmin_workouts as gw
+
+    steps = gw.normalize(THRESHOLD_STEPS)
+    # The planned 15 minutes become a note; neither step keeps a timer.
+    assert steps[0] == {"type": "warmup", "note": "Plan: about 15 min easy"}
+    assert steps[2] == {"type": "cooldown", "note": "15 min easy"}
+    rep, jog = steps[1]["steps"]
+    assert rep == {"type": "run", "duration_s": 360, "hr_low": 150, "hr_high": 160}  # a cap becomes a range; heart rate beats pace
+    assert jog == {"type": "recover", "duration_s": 60}
+
+    g = gw.to_garmin("5x6 min sub-threshold", "15 min easy before and after", steps)
+    warm, group, cool = g["workoutSegments"][0]["workoutSteps"]
+    for s in (warm, cool):
+        assert s["endCondition"]["conditionTypeKey"] == "lap.button" and "endConditionValue" not in s
+    assert (group["numberOfIterations"], group["skipLastRestStep"], [s["stepOrder"] for s in group["workoutSteps"]]) == (5, True, [3, 4])
+    work = group["workoutSteps"][0]
+    assert work["endCondition"]["conditionTypeKey"] == "time" and work["endConditionValue"] == 360
+    assert (work["targetType"]["workoutTargetTypeKey"], work["targetValueOne"], work["targetValueTwo"]) == ("heart.rate.zone", 150, 160)
+    assert cool["stepOrder"] == 5 and warm["description"] == "Plan: about 15 min easy"
+
+
+def test_garmin_steps_pace_targets_distances_and_bad_input():
+    from runapp import garmin_workouts as gw
+
+    steps = gw.normalize([
+        raw_step("run", distance_m=1000, pace_fast="7:15", pace_slow="7:06"),   # ends swapped: sorted
+        raw_step("repeat", times=1, steps=[raw_step("run", duration_s=20)]),    # "1 x" is just the step
+        raw_step("sprint", duration_s=10),                                       # unknown type: dropped
+        raw_step("recover", duration_s=0),                                       # no length: until Lap
+        raw_step("run", duration_s=1200, hr_low=300, hr_high=20),                # nonsense target: no target
+    ])
+    assert steps == [{"type": "run", "distance_m": 1000, "pace_fast": 426.0, "pace_slow": 435.0}, {"type": "run", "duration_s": 20},
+                     {"type": "recover"}, {"type": "run", "duration_s": 1200}]
+    km, _, jog, _ = gw.to_garmin("x", "", steps)["workoutSegments"][0]["workoutSteps"]
+    assert km["endCondition"]["conditionTypeKey"] == "distance" and km["endConditionValue"] == 1000
+    # Garmin wants pace as speed in m/s, fast end first: 7:06/mi = 3.78 m/s, 7:15/mi = 3.70 m/s.
+    assert km["targetType"]["workoutTargetTypeKey"] == "pace.zone"
+    assert (round(km["targetValueOne"], 2), round(km["targetValueTwo"], 2)) == (3.78, 3.70)
+    assert jog["endCondition"]["conditionTypeKey"] == "lap.button" and jog["targetType"]["workoutTargetTypeKey"] == "no.target"
+    assert gw.parse_pace("7:06/mi") == 426 and gw.parse_pace("4:25") == 265 and gw.parse_pace("fast") is None
+    with pytest.raises(gw.GarminWorkoutError):
+        gw.normalize([raw_step("warmup"), raw_step("cooldown")])  # no running in it
+
+
+class FakeWorkoutApi:
+    def __init__(self):
+        self.uploaded, self.scheduled, self.deleted = [], [], []
+
+    def upload_workout(self, payload):
+        self.uploaded.append(payload)
+        return {"workoutId": 111}
+
+    def schedule_workout(self, workout_id, day):
+        self.scheduled.append((workout_id, day))
+        return {"workoutScheduleId": 222}
+
+    def delete_workout(self, workout_id):
+        self.deleted.append(workout_id)
+
+
+def test_garmin_workout_build_send_remove(conn):
+    from runapp import garmin_workouts as gw, plan
+
+    plan.save(conn, "HR cap 160 on threshold reps", [
+        {"date": "2026-10-05", "kind": "rest", "title": "Rest"},
+        {"date": "2026-10-06", "kind": "threshold", "title": "5x6 min sub-threshold", "details": "15 min easy before and after"},
+        {"date": "2026-10-06", "kind": "strength", "title": "Strength A: legs & calves", "details": "Squat | 2 × 8 | Slow"},
+    ])
+    asked = {}
+
+    def runner(message, prompt, args, timeout):
+        asked.update(prompt=prompt, args=args)
+        return {"structured_output": {"steps": THRESHOLD_STEPS}}
+
+    with pytest.raises(gw.GarminWorkoutError):
+        gw.build(conn, "2026-10-05", runner)  # a rest day has nothing to send
+    with pytest.raises(gw.GarminWorkoutError):
+        gw.send(conn, FakeWorkoutApi(), "2026-10-06")  # nothing built yet
+    steps = gw.build(conn, "2026-10-06", runner)
+    assert steps[0]["type"] == "warmup" and "duration_s" not in steps[0]
+    assert "5x6 min sub-threshold" in asked["prompt"] and "HR cap 160" in asked["prompt"] and "--json-schema" in asked["args"]
+
+    by_kind = {s["kind"]: s for s in plan.with_actuals(conn, date(2026, 10, 5))["sessions"]}
+    assert by_kind["threshold"]["garmin"]["state"] == "draft" and by_kind["threshold"]["garmin"]["steps"] == steps
+    assert "garmin" not in by_kind["rest"] and "garmin" not in by_kind["strength"]
+
+    garmin = FakeWorkoutApi()
+    gw.send(conn, garmin, "2026-10-06")
+    assert garmin.scheduled == [(111, "2026-10-06")] and garmin.uploaded[0]["workoutName"] == "5x6 min sub-threshold"
+    sent = next(s for s in plan.with_actuals(conn, date(2026, 10, 5))["sessions"] if s["kind"] == "threshold")["garmin"]
+    assert (sent["state"], sent["scheduled"], sent["changed"]) == ("sent", True, False)
+    with pytest.raises(gw.GarminWorkoutError):
+        gw.send(conn, garmin, "2026-10-06")  # not twice
+    with pytest.raises(gw.GarminWorkoutError):
+        gw.build(conn, "2026-10-06", runner)  # nor rebuilt while it's on Garmin
+
+    # Editing the plan afterwards shows on the session, so you know the watch has the old version.
+    conn.execute("UPDATE plan_sessions SET title = '4x6 min sub-threshold' WHERE kind = 'threshold'")
+    assert next(s for s in plan.with_actuals(conn, date(2026, 10, 5))["sessions"] if s["kind"] == "threshold")["garmin"]["changed"]
+    gw.discard(conn, "2026-10-06")  # only drops unsent drafts
+    assert conn.execute("SELECT COUNT(*) FROM garmin_workouts").fetchone()[0] == 1
+    gw.remove(conn, garmin, "2026-10-06")
+    assert garmin.deleted == [111] and conn.execute("SELECT COUNT(*) FROM garmin_workouts").fetchone()[0] == 0
+
+
+def test_garmin_workout_kept_when_scheduling_fails(conn):
+    from runapp import garmin_workouts as gw, plan
+
+    plan.save(conn, "", [{"date": "2026-10-06", "kind": "easy", "title": "40 min easy"}])
+    gw.build(conn, "2026-10-06", lambda *a: {"structured_output": {"steps": [raw_step("run", duration_s=2400, hr_low=100, hr_high=150)]}})
+
+    class NoCalendar(FakeWorkoutApi):
+        def schedule_workout(self, workout_id, day):
+            raise RuntimeError("boom")
+
+    garmin = NoCalendar()
+    with pytest.raises(gw.GarminWorkoutError, match="in your Garmin library"):
+        gw.send(conn, garmin, "2026-10-06")
+    info = plan.with_actuals(conn, date(2026, 10, 5))["sessions"][0]["garmin"]
+    assert (info["state"], info["scheduled"]) == ("sent", False)  # still known here, so it can be removed
+    gw.remove(conn, garmin, "2026-10-06")
+    assert garmin.deleted == [111]
+
+
+def test_garmin_workout_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runapp import garmin_workouts as gw, plan, sync
+    from runapp.server import app
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
+    c = db.connect(tmp_path / "api.db")
+    plan.save(c, "", [{"date": "2026-10-06", "kind": "easy", "title": "40 min easy"}])
+    client = TestClient(app)
+    assert client.post("/api/garmin/workouts/2026-10-07/send").status_code == 409  # nothing built for that day
+    assert client.post("/api/garmin/workouts/tuesday/build").status_code == 422
+    gw.build(c, "2026-10-06", lambda *a: {"structured_output": {"steps": [raw_step("run", duration_s=2400)]}})
+    assert client.get("/api/plan").json()["sessions"][0]["garmin"]["state"] == "draft"
+
+    def not_logged_in(interactive=True):
+        raise sync.NotLoggedIn("Garmin session expired")
+
+    monkeypatch.setattr(sync, "login", not_logged_in)
+    assert client.post("/api/garmin/workouts/2026-10-06/send").status_code == 503
+    garmin = FakeWorkoutApi()
+    monkeypatch.setattr(sync, "login", lambda interactive=True: garmin)
+    assert client.post("/api/garmin/workouts/2026-10-06/send").json()["sessions"][0]["garmin"]["state"] == "sent"
+    assert client.delete("/api/garmin/workouts/2026-10-06").json()["sessions"][0]["garmin"]["state"] == "sent"  # a draft-only delete
+    assert client.delete("/api/garmin/workouts/2026-10-06?sent=true").json()["sessions"][0]["garmin"]["state"] == "none"
+    assert garmin.deleted == [111]

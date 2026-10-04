@@ -2,6 +2,9 @@
 
 The coach and the status card read it as text (as_text); the dashboard shows
 it as a table with what you actually did on each day next to the plan.
+
+Strength sessions (kind "strength", written by strength.py) sit alongside the
+runs: a day can hold a run and a strength session, and each is changed on its own.
 """
 
 import json
@@ -9,9 +12,9 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 
-from . import analysis
+from . import analysis, garmin_workouts, strength
 
-KINDS = ["easy", "long", "threshold", "intervals", "race", "rest", "cross"]
+KINDS = ["easy", "long", "threshold", "intervals", "race", "rest", "cross", "strength"]
 # How hard each kind is, to spot days run harder than planned.
 INTENSITY = {"rest": 0, "cross": 1, "easy": 1, "long": 2, "threshold": 3, "intervals": 4, "race": 5}
 
@@ -19,7 +22,8 @@ INTENSITY = {"rest": 0, "cross": 1, "easy": 1, "long": 2, "threshold": 3, "inter
 def get(conn: sqlite3.Connection) -> dict:
     _migrate_from_text(conn)
     sessions = [
-        dict(r) for r in conn.execute("SELECT id, date, kind, title, details FROM plan_sessions ORDER BY date, id")
+        dict(r) for r in conn.execute(  # each day: the run first, then its strength session
+            "SELECT id, date, kind, title, details FROM plan_sessions ORDER BY date, kind = 'strength', id")
     ]
     row = conn.execute("SELECT value FROM coach_state WHERE key = 'plan_notes'").fetchone()
     return {"notes": row["value"] if row and row["value"] else "", "sessions": sessions}
@@ -49,7 +53,10 @@ def as_text(conn: sqlite3.Connection) -> str:
         for s in p["sessions"]:
             d = date.fromisoformat(s["date"])
             text = f"- {d.strftime('%a %b')} {d.day} ({s['date']}) [{s['kind']}]: {s['title']}"
-            if s["details"]:
+            if s["kind"] == strength.KIND:  # exercises and doses, without the cues
+                d = strength.parse_details(s["details"])
+                text += ". " + "; ".join(d["notes"][:1] + [f"{e['name']} {e['dose']}" for e in d["exercises"]])
+            elif s["details"]:
                 text += f". {s['details']}"
             lines.append(text)
     return "\n".join(lines)
@@ -59,16 +66,29 @@ def with_actuals(conn: sqlite3.Connection, today: date | None = None) -> dict:
     """The plan plus, for each session, what was actually done that day."""
     today = today or date.today()
     p = get(conn)
+    p["strength"] = strength.overview(conn, today)
     if not p["sessions"]:
         return p
     first = p["sessions"][0]["date"]
     by_day: dict[str, list[dict]] = {}
+    lifting: dict[str, list[dict]] = {}  # recorded strength activities, shown on the strength session
     for r in conn.execute("SELECT * FROM activities WHERE start_local >= ? ORDER BY start_local", (first,)):
-        by_day.setdefault(r["start_local"][:10], []).append(
-            {"id": r["id"], "name": r["name"], "kind": analysis.workout_kind(r), "distance_m": r["distance_m"], "duration_s": r["duration_s"]}
-        )
+        act = {"id": r["id"], "name": r["name"], "kind": analysis.workout_kind(r), "distance_m": r["distance_m"], "duration_s": r["duration_s"]}
+        (lifting if r["type"] in strength.ACTIVITY_TYPES else by_day).setdefault(r["start_local"][:10], []).append(act)
+    logged = strength.logged_dates(conn)
+    strength_days = {s["date"] for s in p["sessions"] if s["kind"] == strength.KIND}
     for s in p["sessions"]:
-        done = by_day.get(s["date"], [])
+        if s["kind"] == strength.KIND:
+            s.update(strength.parse_details(s["details"]), actual=lifting.get(s["date"], []), logged=s["date"] in logged)
+            if s["actual"] or s["logged"]:
+                s["state"] = "done"
+            elif s["date"] > today.isoformat():
+                s["state"] = "upcoming"
+            else:
+                s["state"] = "today" if s["date"] == today.isoformat() else "missed"
+            continue
+        # A recorded strength activity belongs to the day's strength session when there is one.
+        done = by_day.get(s["date"], []) + ([] if s["date"] in strength_days else lifting.get(s["date"], []))
         runs = [a for a in done if a["kind"] != "cross"]
         s["actual"] = done
         if s["date"] > today.isoformat():
@@ -80,6 +100,7 @@ def with_actuals(conn: sqlite3.Connection, today: date | None = None) -> dict:
             s["state"] = "harder" if hardest > INTENSITY[s["kind"]] + 1 else "done"
         else:
             s["state"] = "today" if s["date"] == today.isoformat() else "missed"
+    garmin_workouts.for_plan(conn, p["sessions"])
     return p
 
 
@@ -158,6 +179,13 @@ def _migrate_from_text(conn: sqlite3.Connection) -> None:
 #   {"op": "set", "date": ..., "kind": ..., "title": ..., "details": ...}  replace that day's session(s)
 #   {"op": "add", ...same fields...}                                    add another session that day
 #   {"op": "remove", "date": ...}                                       clear that day
+# Runs and strength are separate tracks: an operation with kind "strength" touches only that day's
+# strength session, anything else only the run. So moving a run never drops the strength next to it.
+
+
+def _track(change: dict) -> str:
+    """SQL condition picking the sessions a set/remove operation replaces."""
+    return "kind = 'strength'" if change.get("kind") == strength.KIND else "kind != 'strength'"
 
 
 def validate_changes(changes: list[dict]) -> list[dict]:
@@ -171,6 +199,8 @@ def validate_changes(changes: list[dict]) -> list[dict]:
         except ValueError:
             raise ValueError(f"change {i}: date must be YYYY-MM-DD") from None
         item = {"op": op, "date": c["date"]}
+        if op == "remove" and c.get("kind") == strength.KIND:
+            item["kind"] = strength.KIND
         if op != "remove":
             if c.get("kind") not in KINDS:
                 raise ValueError(f"change {i}: kind must be one of {', '.join(KINDS)}")
@@ -197,8 +227,8 @@ def proposals(conn: sqlite3.Connection, status: str = "pending") -> list[dict]:
     for r in conn.execute("SELECT * FROM plan_proposals WHERE status = ? ORDER BY id", (status,)):
         changes = json.loads(r["changes_json"])
         for c in changes:  # show what each change replaces
-            c["current"] = [dict(x) for x in conn.execute(
-                "SELECT kind, title FROM plan_sessions WHERE date = ? ORDER BY id", (c["date"],))]
+            c["current"] = [] if c["op"] == "add" else [dict(x) for x in conn.execute(
+                f"SELECT kind, title FROM plan_sessions WHERE date = ? AND {_track(c)} ORDER BY id", (c["date"],))]
         out.append({"id": r["id"], "created_at": r["created_at"], "summary": r["summary"], "changes": changes})
     return out
 
@@ -209,7 +239,7 @@ def apply_proposal(conn: sqlite3.Connection, proposal_id: int) -> None:
         raise ValueError("That proposal isn't pending any more.")
     for c in json.loads(row["changes_json"]):
         if c["op"] in ("set", "remove"):
-            conn.execute("DELETE FROM plan_sessions WHERE date = ?", (c["date"],))
+            conn.execute(f"DELETE FROM plan_sessions WHERE date = ? AND {_track(c)}", (c["date"],))
         if c["op"] in ("set", "add"):
             conn.execute("INSERT INTO plan_sessions (date, kind, title, details) VALUES (?, ?, ?, ?)",
                          (c["date"], c["kind"], c["title"], c["details"]))
