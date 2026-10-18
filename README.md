@@ -1,10 +1,55 @@
 # Running log
 
-Copies all of your Garmin Connect activities to your own machine and analyzes them for running goals:
+Copies your runs from Garmin Connect or Strava to your own computer and analyzes them for running goals:
 weekly and monthly volume, training load, time in heart-rate zones, aerobic efficiency, personal records
-and race-time predictions.
+and race-time predictions, with a training plan and an AI coach.
 
-## Setup
+## Quick start (no terminal needed)
+
+1. **Download** this project: the green **Code** button on GitHub, then **Download ZIP**. Unzip it and put the
+   folder somewhere permanent, like Documents.
+2. **Double-click `Start Running Log`** (`.command` on a Mac, `.bat` on Windows).
+   - Mac, first time only: macOS blocks files downloaded from the internet. Right-click the file, choose **Open**,
+     then **Open** again. (On recent macOS: System Settings → Privacy & Security → **Open Anyway**.)
+   - If Python isn't installed, a download page opens. Install it (3.11, 3.12 or 3.13) and double-click again.
+   - The first start sets itself up, which takes a few minutes and needs the internet.
+3. **Your browser opens the app.** Choose Garmin or Strava and sign in on that page. The first sync downloads
+   your history; the page shows its progress.
+
+Leave the window that opened running while you use the app; closing it stops the app. Double-click the file again
+whenever you want to start it. Your data lives in the `data` folder inside the project: to update the app later,
+download it again and move your `data` folder into the new copy.
+
+The AI coach, the daily status and sending workouts to a watch also need [Claude Code](https://claude.com/claude-code)
+installed and signed in on the same computer. Everything else works without it.
+
+The Windows launcher is written but has not been tried on a Windows machine yet.
+
+## Garmin or Strava
+
+The app reads from one service at a time, chosen on the setup page (**Settings → Connection** later on). To change,
+disconnect there first: the downloaded runs are removed and fetched again from the other service, while your plan,
+races, goals and notes stay.
+
+| | Garmin | Strava |
+|---|---|---|
+| Runs with pace, heart rate, laps, zones, best efforts, workouts | yes | yes |
+| Sleep, HRV, readiness, Body Battery, VO₂ max | yes | no |
+| Running form (ground contact, vertical ratio, balance) | yes | cadence and stride only |
+| Weather and heat adjustment | yes | no |
+| Send planned workouts to the watch | yes | no |
+| Sign-in | Garmin email and password (plus the emailed code), on the setup page | your own free Strava API app (the setup page walks you through it) |
+
+- **Garmin** uses an unofficial sign-in. Your password is sent to Garmin and never saved; only the session Garmin
+  issues is kept, in `data/garmin_tokens.json`.
+- **Strava** uses its official API. Strava lets an unreviewed app read only its owner's account, so each person
+  registers their own (strava.com/settings/api, with `localhost` as the Authorization Callback Domain). Its keys and
+  tokens are kept in `data/strava_tokens.json`. Strava allows 100 requests per 15 minutes and 1,000 a day, and each
+  run costs two, so a long history downloads in stages: the sync waits for the next 15-minute window by itself and
+  picks up the rest the next day. On Strava, a run's time is its moving time (a race's is start to finish).
+  Read Strava's API agreement before relying on the AI coach with Strava data.
+
+## Setup from a terminal
 
 ```sh
 python3 -m venv .venv
@@ -14,7 +59,8 @@ python3 -m venv .venv
 ## Use
 
 ```sh
-.venv/bin/python -m runapp login        # Garmin email, password, MFA code (once)
+.venv/bin/python -m runapp serve --open # starts the app and opens it; sign in on the setup page
+.venv/bin/python -m runapp login        # or sign in to Garmin here: email, password, MFA code (once)
 .venv/bin/python -m runapp sync         # download everything new (first run fetches full history)
 .venv/bin/python -m runapp serve        # dashboard at http://localhost:8000
 ```

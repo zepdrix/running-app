@@ -158,7 +158,13 @@ function render() {
   const o = d.overview;
   document.getElementById("data-range").textContent = o.activity_count
     ? `${o.activity_count.toLocaleString()} activities (${o.run_count.toLocaleString()} runs) since ${fmtDate(o.first_activity)}`
-    : "No activities yet. Click Sync Garmin to download your history.";
+    : "No activities yet. Tap the sync button to download your history.";
+  // Which service the runs come from (Garmin or Strava): it names the sync button and the settings row.
+  const src = d.source;
+  const syncLabel = src ? `Sync ${src.label}` : "Sync";
+  document.getElementById("sync-btn").textContent = syncLabel;
+  document.getElementById("sync-btn").setAttribute("aria-label", syncLabel);
+  document.getElementById("source-name").textContent = d.demo ? "Demo data" : src ? src.label : "Not connected";
   if (o.last_sync && !syncPolling) setSyncStatus(`Last sync ${fmtDate(o.last_sync.finished_at.replace(" ", "T") + "Z")}: ${o.last_sync.message}`);
   renderTiles(o);
   fillZoneForm();
@@ -613,6 +619,8 @@ function renderPredictions(preds) {
       .join("")}</tbody>`;
 }
 
+// An activity opens on the service it came from.
+const activityUrl = (id) => ((state.data.source || {}).activity_url || "https://connect.garmin.com/modern/activity/{id}").replace("{id}", id);
 const unitTag = (text) => `<span class="m-only">${text}</span>`; // shown on phones, where tables lose their headings
 function renderActivities(acts) {
   const el = document.getElementById("activities");
@@ -624,7 +632,7 @@ function renderActivities(acts) {
   el.innerHTML = `
     <thead><tr><th>Activity</th><th>Kind</th><th>Date</th><th>Distance (${unitLabel()})</th><th>Time</th><th>Pace ${PACE_UNIT}</th><th>Avg HR</th><th>Weather</th><th>Load</th></tr></thead>
     <tbody>${acts
-      .map((a) => `<tr><td class="name"><a href="https://connect.garmin.com/modern/activity/${a.id}" target="_blank" rel="noopener">${esc(a.name) || "Untitled"}</a></td>
+      .map((a) => `<tr><td class="name"><a href="${esc(activityUrl(a.id))}" target="_blank" rel="noopener">${esc(a.name) || "Untitled"}</a></td>
         <td class="kind-cell">${a.kind === "cross" ? `<span class="kind k-cross">${esc((a.type || "Other").replace(/_/g, " "))}</span>` : kindChip(a.kind)}</td>
         <td>${shortDate(a.start_local.slice(0, 10))}<span class="m-hide">, ${a.start_local.slice(0, 4)}</span></td>
         <td class="${a.distance_m ? "" : "m-hide"}">${a.distance_m ? `${fmtDist(a.distance_m, 2)}${unitTag(` ${unitLabel()}`)}` : "–"}</td><td>${fmtTime(a.duration_s)}</td>
@@ -1422,7 +1430,7 @@ async function refreshStatus(syncFirst = true) {
   statusUpdating = true;
   statusRefresh.disabled = true;
   const started = Date.now();
-  const tick = () => (statusTime.textContent = `Updating${syncFirst ? " (syncing Garmin first)" : ""}… ${Math.round((Date.now() - started) / 1000)}s`);
+  const tick = () => (statusTime.textContent = `Updating${syncFirst ? " (syncing first)" : ""}… ${Math.round((Date.now() - started) / 1000)}s`);
   tick();
   const timer = setInterval(tick, 1000);
   try {

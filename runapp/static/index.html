@@ -62,6 +62,9 @@
               <button type="button" data-theme-choice="auto" title="Follow this device">Auto</button><button type="button" data-theme-choice="light">Light</button><button type="button" data-theme-choice="dark">Dark</button>
             </div>
           </div>
+          <div class="menu-row menu-source"><span class="menu-label">Runs from <b id="source-name"></b></span>
+            <a class="button" href="/setup" id="source-link" title="Sign in again, or switch between Garmin and Strava">Connection</a>
+          </div>
           <button type="button" id="install-btn" hidden>Install app</button>
           <button type="button" id="logout-btn" hidden>Log out</button>
           <button type="button" class="primary menu-done" id="menu-done">Done</button>
@@ -75,8 +78,7 @@
 
     <div id="offline-banner" class="banner offline-banner" role="status" hidden></div>
     <div id="demo-banner" class="banner" hidden>
-      You're viewing synthetic demo data. Run <code>.venv/bin/python -m runapp login</code>, then
-      <code>.venv/bin/python -m runapp serve</code> to see your own Garmin activities.
+      You're viewing made-up demo data. Start the app without <code>--demo</code> to connect your own Garmin or Strava account.
     </div>
 
     <!-- ===== Today: one screen ===== -->
@@ -87,7 +89,7 @@
         <div class="card-title">
           <span class="badge-icon" id="status-badge"><span class="icon" data-icon="zap"></span></span>
           <div class="grow"><h2>Body</h2><div class="sub" id="status-time"></div></div>
-          <button type="button" class="ghost icon-btn" id="status-refresh" title="Refresh status (syncs Garmin first)" aria-label="Refresh status">↻</button>
+          <button type="button" class="ghost icon-btn" id="status-refresh" title="Refresh status (syncs first)" aria-label="Refresh status">↻</button>
         </div>
         <div class="card-scroll" id="st-body"></div>
         <div class="status-metrics" id="status-metrics"></div>

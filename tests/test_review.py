@@ -101,7 +101,7 @@ def test_sync_problems_are_reported_not_swallowed(client, tmp_path, monkeypatch)
         sync.login(interactive=False)
 
     error = server._sync_worker(False)
-    assert "session expired" in error and server._sync_state == {"running": False, "message": error}
+    assert "sign-in has expired" in error and server._sync_state == {"running": False, "message": error}
 
     monkeypatch.setattr(status, "generate", lambda conn, units: None)  # no Claude in tests
     assert client.post("/api/status").json()["sync_error"] == error
@@ -148,6 +148,17 @@ def test_coach_message_goes_in_on_stdin_and_keeps_its_conversation(conn, monkeyp
     monkeypatch.setattr(coach, "_run", gone)
     assert coach.ask(conn, "hi") == {"reply": "hello"}
     assert calls == ["old", None]
+
+
+def test_resumed_coach_chat_gets_the_current_prompt(monkeypatch):
+    from runapp import coach
+
+    monkeypatch.setattr(coach, "_can_refresh_prompt", lambda: True)
+    args = coach._coach_args("s1")
+    assert args[args.index("--resume") + 1] == "s1"
+    assert args[args.index("--system-prompt-snapshot") + 1] == "off"  # else the plan and date stay as they were on day one
+    monkeypatch.setattr(coach, "_can_refresh_prompt", lambda: False)  # an older Claude Code would reject the option
+    assert "--system-prompt-snapshot" not in coach._coach_args("s1")
 
 
 def test_treadmill_efforts_are_not_records_or_predictions(conn):

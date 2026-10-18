@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Set up Running Log</title>
+  <meta name="theme-color" content="#121720">
+  <script src="/static/theme.js"></script>
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="setup">
+  <header class="setup-head">
+    <img class="brand-mark" src="/static/icons/icon-192.png" alt="" width="48" height="48">
+    <div><h1 id="setup-title">Set up Running Log</h1><p class="sub" id="setup-sub"></p></div>
+  </header>
+
+  <div class="banner setup-error" id="setup-error" role="alert" hidden></div>
+
+  <!-- Already connected -->
+  <section class="card setup-card" id="connected" hidden>
+    <h2 id="connected-title"></h2>
+    <p class="sub" id="connected-sub"></p>
+    <a class="button primary big" href="/">Open the app</a>
+    <details class="setup-more">
+      <summary id="reconnect-summary">Sign in again</summary>
+      <p class="sub" id="reconnect-sub"></p>
+      <div id="reconnect-slot"></div>
+    </details>
+    <details class="setup-more">
+      <summary id="switch-summary">Use a different service</summary>
+      <p class="sub" id="switch-sub"></p>
+      <button type="button" class="danger" id="disconnect-btn"></button>
+    </details>
+  </section>
+
+  <!-- Step 1: choose -->
+  <section id="choose" hidden>
+    <div class="setup-step"><span class="step-n">1</span>Where are your runs?</div>
+    <div class="choices" role="radiogroup" aria-label="Where your runs come from">
+      <button type="button" class="card choice" role="radio" aria-checked="false" data-choice="garmin">
+        <span class="choice-name">Garmin Connect</span>
+        <span class="choice-what">Everything the app can do: runs with running form, sleep and readiness, VO₂ max, weather, and sending workouts to your watch.</span>
+      </button>
+      <button type="button" class="card choice" role="radio" aria-checked="false" data-choice="strava">
+        <span class="choice-name">Strava</span>
+        <span class="choice-what">Runs with pace, heart rate and laps, from any watch or phone. No sleep or readiness, no running-form numbers, no weather, and workouts can't be sent to a watch.</span>
+      </button>
+    </div>
+    <p class="sub setup-note">It's one or the other. You can change later, but changing removes the downloaded runs and fetches them again from the other service.</p>
+  </section>
+
+  <!-- Step 2: sign in -->
+  <section class="card setup-card" id="form-garmin" hidden>
+    <div class="setup-step"><span class="step-n">2</span>Sign in to Garmin</div>
+    <form id="garmin-form" class="setup-form" autocomplete="on">
+      <label>Garmin email<input type="email" name="email" autocomplete="username" required></label>
+      <label>Garmin password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button type="submit" class="primary big">Connect Garmin</button>
+      <p class="sub">Your password is sent to Garmin to sign in and is not saved. The app keeps only the session Garmin gives it, on this computer.</p>
+    </form>
+    <form id="mfa-form" class="setup-form" hidden>
+      <p><b>Garmin sent you a code.</b> Check your email or texts and enter it here.</p>
+      <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="12"></label>
+      <button type="submit" class="primary big">Finish signing in</button>
+    </form>
+  </section>
+
+  <section class="card setup-card" id="form-strava" hidden>
+    <div class="setup-step"><span class="step-n">2</span>Connect Strava</div>
+    <p class="sub">Strava only lets an app you register yourself read your account. It's free and takes about two minutes:</p>
+    <ol class="setup-list">
+      <li>Open <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a> and sign in.</li>
+      <li>Create an app. Any name and website will do (for the website, <code>http://localhost</code> works).
+        For <b>Authorization Callback Domain</b> enter <code id="callback-domain">localhost</code></li>
+      <li>Copy the <b>Client ID</b> and the <b>Client Secret</b> from that page into the boxes below.</li>
+    </ol>
+    <form id="strava-form" class="setup-form" autocomplete="off">
+      <label>Client ID<input name="client_id" inputmode="numeric" required maxlength="20"></label>
+      <label>Client Secret<input name="client_secret" required maxlength="100" autocapitalize="off" spellcheck="false"></label>
+      <button type="submit" class="primary big">Continue to Strava</button>
+      <p class="sub">Strava then asks you to approve access. Leave “View data about your private activities” ticked so all your runs come through. The keys are saved on this computer only.</p>
+    </form>
+  </section>
+
+  <p class="sub setup-coach" id="coach-note" hidden></p>
+</main>
+<script defer src="/static/setup.js"></script>
+</body>
+</html>

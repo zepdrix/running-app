@@ -23,7 +23,8 @@ def training_snapshot() -> str:
     for the last 5 days, the race log (official results, effort, courses, upcoming races),
     recent threshold/interval sessions rep by rep (paces in seconds per mile), running form
     (cadence, ground contact, vertical ratio and stride at matched pace bands; form fatigue within
-    runs; left/right balance), strength training (phase, sessions done, clashes with runs), and any plan
+    runs; left/right balance), strength training (phase, sessions done, clashes with runs), the plan for the last 3 weeks next to
+    what was actually done each day (state: done, harder, missed, rested, ran, today), and any plan
     changes still waiting for the athlete's approval. Distances in meters, times in seconds.
     Call this first."""
     conn = db.connect()
@@ -41,6 +42,7 @@ def training_snapshot() -> str:
             "recent_quality_sessions": workouts.brief(conn, 5),
             "running_form": form.brief(conn),
             "strength": strength.brief(conn),
+            "plan_vs_actual": plan.recent_with_actuals(conn),
             "pending_plan_proposals": plan.proposals(conn),
         }
     finally:

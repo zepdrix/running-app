@@ -22,7 +22,7 @@ import sqlite3
 import threading
 from datetime import date
 
-from . import coach, zones
+from . import coach, source, zones
 
 MILE = 1609.344
 SENDABLE = ("easy", "long", "threshold", "intervals")  # kinds of session that make sense on the watch
@@ -298,8 +298,9 @@ def send(conn: sqlite3.Connection, client, day: str) -> None:
         raise GarminWorkoutError("That workout is on Garmin already.")
     session = _session(conn, day)
     payload = to_garmin(session["title"], session["details"], json.loads(saved["steps_json"]))
+    upload = client.upload_workout  # looked up outside the try: an expired Garmin sign-in is reported as that
     try:
-        workout_id = client.upload_workout(payload)["workoutId"]
+        workout_id = upload(payload)["workoutId"]
     except Exception as e:
         raise GarminWorkoutError(f"Garmin didn't accept the workout: {e}") from e
     # Saved straight away: if scheduling fails, the workout is still known here and can be removed.
@@ -321,8 +322,9 @@ def remove(conn: sqlite3.Connection, client, day: str) -> None:
     if not saved:
         return
     if saved["garmin_workout_id"]:
+        delete = client.delete_workout
         try:
-            client.delete_workout(saved["garmin_workout_id"])  # also clears it from the calendar
+            delete(saved["garmin_workout_id"])  # also clears it from the calendar
         except Exception as e:
             if "404" not in str(e):  # already deleted in Garmin Connect: nothing left to remove
                 raise GarminWorkoutError(f"Garmin didn't remove the workout: {e}") from e
@@ -338,6 +340,8 @@ def discard(conn: sqlite3.Connection, day: str) -> None:
 
 def for_plan(conn: sqlite3.Connection, sessions: list[dict]) -> None:
     """Attach to each run in the plan what's been built or sent for it."""
+    if source.current() != "garmin":
+        return  # only a Garmin account can receive workouts
     saved = {r["date"]: r for r in conn.execute("SELECT * FROM garmin_workouts")}
     seen = set()
     for s in sessions:

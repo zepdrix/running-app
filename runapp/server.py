@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel, Field
 
-from . import analysis, auth, coach, config, db, form, garmin_workouts, plan, races, status, strength, sync, workouts, zones
+from . import analysis, auth, coach, config, db, form, garmin_workouts, plan, races, source, status, strava, strength, sync, workouts, zones
 
 STATIC = Path(__file__).parent / "static"
 
@@ -164,7 +164,144 @@ _sync_lock = threading.Lock()
 
 @app.get("/")
 def index():
+    # First run: nothing is connected yet, so start at the page where you choose Garmin or Strava and sign in.
+    if not config.DEMO and not source.current():
+        return RedirectResponse("/setup", status_code=303)
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+# ---------- setup: choose Garmin or Strava and sign in, all in the browser ----------
+@app.get("/setup")
+def setup_page():
+    return FileResponse(STATIC / "setup.html", headers={"Cache-Control": "no-cache"})
+
+
+def _setup_state() -> dict:
+    conn = db.connect()
+    try:
+        activities = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "source": source.info(),
+        "connected": source.connected(),
+        "sources": {k: {"label": v["label"]} for k, v in source.SOURCES.items()},
+        "activities": activities,
+        "demo": config.DEMO,
+        "coach_ready": coach.available(),
+        "syncing": _sync_state["running"],
+    }
+
+
+@app.get("/api/setup")
+def setup_state():
+    return _setup_state()
+
+
+def _allow_source(key: str) -> None:
+    """One source or the other: connecting the second one is refused until the first is disconnected."""
+    if config.DEMO:
+        raise HTTPException(400, "This is the demo. Start the app without --demo to connect your own account.")
+    now = source.current()
+    if now and now != key:
+        raise HTTPException(409, f"This app is connected to {source.SOURCES[now]['label']}. Disconnect it first to use {source.SOURCES[key]['label']}.")
+
+
+def _start_sync(full: bool = False) -> dict:
+    with _sync_lock:
+        if not _sync_state["running"]:
+            _sync_state.update(running=True, message="Starting sync…")
+            threading.Thread(target=_sync_worker, args=(full,), daemon=True).start()
+    return _sync_state
+
+
+class GarminLoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class MfaIn(BaseModel):
+    code: str = Field(min_length=4, max_length=12)
+
+
+@app.post("/api/setup/garmin")
+def setup_garmin(body: GarminLoginIn):
+    """Sign in to Garmin. The password goes to Garmin and nowhere else; only the session it issues is saved."""
+    _allow_source("garmin")
+    try:
+        done = sync.web_login(body.email, body.password)
+    except sync.NotLoggedIn as e:
+        raise HTTPException(401, str(e)) from e
+    if done:
+        _start_sync()
+    return {"connected": done, "mfa": not done}
+
+
+@app.post("/api/setup/garmin/mfa")
+def setup_garmin_mfa(body: MfaIn):
+    _allow_source("garmin")
+    try:
+        sync.web_login_mfa(body.code)
+    except sync.NotLoggedIn as e:
+        raise HTTPException(401, str(e)) from e
+    _start_sync()
+    return {"connected": True}
+
+
+class StravaAppIn(BaseModel):
+    client_id: str = Field(min_length=1, max_length=20)
+    client_secret: str = Field(min_length=1, max_length=100)
+
+
+def _own_address(request: Request) -> str:
+    """This app's address as the browser sees it (behind Tailscale that's the https name, not 127.0.0.1)."""
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+@app.post("/api/setup/strava")
+def setup_strava(body: StravaAppIn, request: Request):
+    """Take your Strava app's keys and answer with the Strava page where you approve access."""
+    _allow_source("strava")
+    try:
+        url = strava.authorize_url(body.client_id, body.client_secret, f"{_own_address(request)}/setup/strava/callback")
+    except strava.StravaError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"authorize_url": url}
+
+
+@app.get("/setup/strava/callback")
+def setup_strava_callback(state: str = "", code: str = "", scope: str = "", error: str = ""):
+    """Strava sends the browser back here after you approve (or refuse)."""
+    from urllib.parse import quote
+
+    try:
+        _allow_source("strava")
+        if error or not code:
+            raise strava.StravaError("Strava access wasn't approved, so nothing was connected.")
+        strava.finish_sign_in(state, code, scope)
+        source.choose("strava")
+    except (strava.StravaError, strava.NotConnected, strava.RateLimited, source.SourceError, HTTPException) as e:
+        return RedirectResponse(f"/setup?error={quote(str(getattr(e, 'detail', e)))}", status_code=303)
+    _start_sync()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/api/source/disconnect")
+def disconnect_source():
+    """Forget the connected service and remove what was downloaded from it (plan, races, goals and notes stay)."""
+    if config.DEMO:
+        raise HTTPException(400, "Nothing is connected in the demo.")
+    if _sync_state["running"]:
+        raise HTTPException(409, "A sync is running. Wait for it to finish, then try again.")
+    conn = db.connect()
+    try:
+        source.disconnect(conn)
+    finally:
+        conn.close()
+    _sync_state.update(running=False, message=None)
+    return _setup_state()
 
 
 @app.get("/api/dashboard")
@@ -174,6 +311,7 @@ def dashboard(weeks: int = 26):
         return {
             "demo": config.DEMO,
             "auth": auth.enabled(),
+            "source": source.info(),
             "overview": analysis.overview(conn),
             "weekly": analysis.weekly(conn, weeks),
             "monthly": analysis.monthly(conn, 12),
@@ -230,11 +368,15 @@ def _sync_worker(full: bool) -> str | None:
     conn = error = None
     try:
         conn = db.connect()
-        client = sync.login(interactive=False)
-        message = sync.run_sync(conn, client, full=full, progress=progress)
+        if source.current() == "strava":
+            message = strava.run_sync(conn, strava.Client(), full=full, progress=progress)
+        elif source.current() == "garmin":
+            message = sync.run_sync(conn, sync.login(interactive=False), full=full, progress=progress)
+        else:
+            raise sync.NotLoggedIn("Nothing is connected yet. Open Settings to connect Garmin or Strava.")
         if message.startswith(sync.FAILED):
             error = message
-    except (sync.NotLoggedIn, sync.GarminUnreachable) as e:
+    except (sync.NotLoggedIn, sync.GarminUnreachable, strava.NotConnected) as e:
         error = str(e)
     except Exception as e:
         error = f"{sync.FAILED}: {e}"
@@ -251,12 +393,7 @@ def _sync_worker(full: bool) -> str | None:
 def start_sync(full: bool = False):
     if config.DEMO:
         return {"running": False, "message": "Syncing is disabled while viewing demo data."}
-    with _sync_lock:
-        if _sync_state["running"]:
-            return _sync_state
-        _sync_state.update(running=True, message="Starting sync…")
-        threading.Thread(target=_sync_worker, args=(full,), daemon=True).start()
-    return _sync_state
+    return _start_sync(full)
 
 
 @app.get("/api/sync")
@@ -411,6 +548,8 @@ def _garmin_workout(day: str, action) -> dict:
     """Run one step of build / send / remove for a day's workout and answer with the plan."""
     if config.DEMO:
         raise HTTPException(400, "Sending to Garmin is disabled while viewing demo data.")
+    if source.current() != "garmin":
+        raise HTTPException(400, "Workouts can only be sent to a watch when the app is connected to Garmin.")
     conn = db.connect()
     try:
         action(conn)
@@ -423,6 +562,15 @@ def _garmin_workout(day: str, action) -> dict:
         conn.close()
 
 
+class _GarminWhenNeeded:
+    """Signs in to Garmin on first use, so a request that's refused earlier (nothing built yet) never touches Garmin."""
+
+    def __getattr__(self, name):
+        client = self.__dict__.get("_client") or sync.login(interactive=False)
+        self.__dict__["_client"] = client
+        return getattr(client, name)
+
+
 @app.post("/api/garmin/workouts/{day}/build")
 def build_garmin_workout(day: IsoDate):
     """Convert that day's planned run into watch steps. Nothing is sent yet."""
@@ -431,7 +579,7 @@ def build_garmin_workout(day: IsoDate):
 
 @app.post("/api/garmin/workouts/{day}/send")
 def send_garmin_workout(day: IsoDate):
-    return _garmin_workout(day, lambda conn: garmin_workouts.send(conn, sync.login(interactive=False), day))
+    return _garmin_workout(day, lambda conn: garmin_workouts.send(conn, _GarminWhenNeeded(), day))
 
 
 @app.delete("/api/garmin/workouts/{day}")
@@ -439,7 +587,7 @@ def remove_garmin_workout(day: IsoDate, sent: bool = False):
     """sent=true takes it off Garmin as well; otherwise only an unsent draft is dropped."""
     if not sent:
         return _garmin_workout(day, lambda conn: garmin_workouts.discard(conn, day))
-    return _garmin_workout(day, lambda conn: garmin_workouts.remove(conn, sync.login(interactive=False), day))
+    return _garmin_workout(day, lambda conn: garmin_workouts.remove(conn, _GarminWhenNeeded(), day))
 
 
 @app.get("/api/status")
@@ -468,7 +616,7 @@ def refresh_status(units: str = "km", sync_first: bool = True):
             worker.start()
             worker.join(STATUS_SYNC_WAIT_S)
             sync_error = (
-                "The Garmin sync is taking a while, so this status uses the data saved so far."
+                "The sync is taking a while, so this status uses the data saved so far."
                 if worker.is_alive() else result.get("error")
             )
     conn = db.connect()

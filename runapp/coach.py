@@ -13,9 +13,10 @@ import subprocess
 import sys
 import threading
 from datetime import date
+from functools import cache
 from pathlib import Path
 
-from . import config, db, plan, strength, zones
+from . import config, db, plan, source, strength, zones
 
 TIMEOUT_S = 300
 TOOLS = ["mcp__running__training_snapshot", "mcp__running__query_sql", "mcp__running__propose_plan_changes"]
@@ -45,7 +46,7 @@ Coaching guidelines:
 - Weather: activity_weather has the conditions for outdoor runs (temp and dew point in °F). Heat costs pace and raises heart rate: heat_cost_pct (from the temperature + dew point rule) is the % slowdown at the same effort, and *_adj / adjusted_time_s values remove it. Use heat-adjusted numbers when judging fitness across seasons, and say when heat explains a slow or high-HR run.
 - Form: running dynamics are compared at matched paces (form changes with pace, so never compare raw averages across different paces). In samples and laps: gct_ms = ground contact time, vo_mm = vertical oscillation, vr_pct = vertical ratio, step_mm = step length, balance_pct = % of ground contact on the left foot (only count seconds actually running: speed_mps >= 1.5 and cadence >= 130). Don't diagnose injuries from form data; for a persistent imbalance or pain, suggest seeing a physio.
 - Races: the race log has official results (prefer them over watch times), how hard each race was run (easy/controlled races aren't fitness markers) and how long each course measured on the watch.
-- plan_sessions holds their planned sessions (date, kind, title, details).
+- The plan below is current. plan_sessions holds their planned sessions (date, kind, title, details); training_snapshot's plan_vs_actual shows the last 3 weeks of sessions with what they actually did each day.
 - Strength: sessions of kind strength sit alongside the runs (a day can hold a run and a strength session). The app places them by these rules, so keep to them when you move, add or judge one: {strength_rules} In propose_plan_changes a change with kind strength touches only that day's strength session, and any other kind only the run. Write strength details as one exercise per line, `Exercise | sets × reps | cue`, with any notes on lines of their own. strength_log holds the days they ticked a session off by hand; a strength_training activity counts as done too. They are new to strength work unless their notes say otherwise: favour consistency over load, and never add strength in the days before a race.
 - The wellness table holds daily raw Garmin JSON (kinds: stats, sleep, hrv, readiness, training_status); training_snapshot already includes a summary of the last few days.
 {context}"""
@@ -67,7 +68,17 @@ and say so when you deviate):
 
 
 def context_sections(notes: str, plan: str) -> str:
-    return (NOTES_SECTION.format(notes=notes) if notes else "") + (PLAN_SECTION.format(plan=plan) if plan else "")
+    note = source.prompt_note()
+    return (f"\n{note}\n" if note else "") + (NOTES_SECTION.format(notes=notes) if notes else "") + (PLAN_SECTION.format(plan=plan) if plan else "")
+
+
+def available() -> bool:
+    """Whether Claude Code is installed, which the coach, the status card and Send to Garmin need."""
+    try:
+        _claude_bin()
+        return True
+    except CoachError:
+        return False
 
 
 class CoachError(Exception):
@@ -83,6 +94,16 @@ def _claude_bin() -> str:
     if not Path(found).exists():
         raise CoachError("Claude Code isn't installed or isn't on PATH. Install it from https://claude.com/claude-code and log in.")
     return found
+
+
+@cache
+def _can_refresh_prompt() -> bool:
+    """Whether this Claude Code has --system-prompt-snapshot (older versions reject unknown options)."""
+    try:
+        proc = subprocess.run([_claude_bin(), "--help"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "--system-prompt-snapshot" in proc.stdout
 
 
 def history(conn: sqlite3.Connection) -> list[dict]:
@@ -160,6 +181,10 @@ def _coach_args(session_id: str | None) -> list[str]:
     args = ["--mcp-config", json.dumps(mcp), "--allowedTools", ",".join(TOOLS)]
     if session_id:
         args += ["--resume", session_id]
+        # By default a resumed conversation replays the system prompt from its first message,
+        # so the coach would never see today's date or a plan made after the chat started.
+        if _can_refresh_prompt():
+            args += ["--system-prompt-snapshot", "off"]
     return args
 
 

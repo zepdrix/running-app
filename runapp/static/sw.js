@@ -8,7 +8,7 @@
  * - Libraries (static/vendor) and fonts: cache first (their URLs are versioned).
  * - Anything that isn't a GET (coach messages, saves, sync, login) is never cached.
  */
-const VERSION = "v8"; // bump to drop old cached files (e.g. the old icon)
+const VERSION = "v9"; // bump to drop old cached files (e.g. the old icon)
 const SHELL = `runapp-shell-${VERSION}`;
 const DATA = `runapp-data-${VERSION}`;
 const LIBS = `runapp-libs-${VERSION}`;
@@ -119,6 +119,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (url.pathname === "/sw.js" || url.pathname === "/login" || url.pathname.startsWith("/api/login")) return;
+  if (url.pathname.startsWith("/setup") || url.pathname.startsWith("/api/setup")) return; // signing in is always live
 
   if (CACHED_API.includes(url.pathname)) {
     event.respondWith(networkFirst(request, DATA, { timeout: API_TIMEOUT_MS, markOffline: true }));

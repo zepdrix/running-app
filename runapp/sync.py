@@ -20,7 +20,7 @@ from garminconnect import (
     GarminConnectTooManyRequestsError,
 )
 
-from . import config, races, store, weather, wellness, zones
+from . import config, races, source, store, weather, wellness, zones
 from .streams import fit_bytes_from_zip, parse_fit, samples_from_details
 
 log = logging.getLogger(__name__)
@@ -63,9 +63,9 @@ def login(interactive: bool = True) -> Garmin:
                 raise GarminUnreachable("Couldn't reach Garmin. Check the Mac's internet connection and try again.") from e
             log.warning("Saved Garmin session no longer valid (%s)", e)
             if not interactive:
-                raise NotLoggedIn("Garmin session expired; run `.venv/bin/python -m runapp login`") from e
+                raise NotLoggedIn("Your Garmin sign-in has expired. Open Settings and reconnect Garmin.") from e
     elif not interactive:
-        raise NotLoggedIn("Not logged in to Garmin; run `.venv/bin/python -m runapp login`")
+        raise NotLoggedIn("Not connected to Garmin. Open Settings to connect it.")
 
     email = input("Garmin email: ").strip()
     password = getpass.getpass("Garmin password: ")
@@ -75,7 +75,59 @@ def login(interactive: bool = True) -> Garmin:
     except GarminConnectAuthenticationError as e:
         raise NotLoggedIn(f"Garmin login failed: {e}") from e
     config.TOKEN_PATH.chmod(0o600)
+    source.choose("garmin")
     return client
+
+
+# ---------- signing in from the setup page ----------
+MFA_WAIT_S = 600
+_web_login: dict = {}  # the sign-in waiting for its MFA code: {"client", "state", "at"}
+
+
+def _login_error(e: Exception) -> NotLoggedIn:
+    if not _garmin_reachable():
+        return NotLoggedIn("Couldn't reach Garmin. Check the internet connection and try again.")
+    if isinstance(e, GarminConnectTooManyRequestsError):
+        return NotLoggedIn("Garmin is refusing sign-ins from here for now (too many attempts). Wait a while and try again.")
+    if isinstance(e, GarminConnectAuthenticationError):
+        return NotLoggedIn("Garmin didn't accept that email and password.")
+    return NotLoggedIn(f"Garmin sign-in failed: {e}")
+
+
+def _finish_web_login(client) -> None:
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    client.client.dump(str(config.TOKEN_PATH))  # the session Garmin issued; the password is not kept anywhere
+    config.TOKEN_PATH.chmod(0o600)
+    source.choose("garmin")
+
+
+def web_login(email: str, password: str) -> bool:
+    """Sign in with email and password. Returns True when done, False when Garmin wants an MFA code next."""
+    _web_login.clear()
+    client = Garmin(email.strip(), password, return_on_mfa=True)
+    try:
+        status, state = client.login()
+    except Exception as e:
+        raise _login_error(e) from e
+    if status == "needs_mfa":
+        _web_login.update(client=client, state=state, at=time.monotonic())
+        return False
+    _finish_web_login(client)
+    return True
+
+
+def web_login_mfa(code: str) -> None:
+    """Finish a sign-in that was waiting for the code Garmin emailed or texted."""
+    pending = dict(_web_login)
+    if not pending or time.monotonic() - pending["at"] > MFA_WAIT_S:
+        _web_login.clear()
+        raise NotLoggedIn("That sign-in has expired. Enter your email and password again.")
+    try:
+        pending["client"].resume_login(pending["state"], code.strip())
+    except Exception as e:
+        raise NotLoggedIn("Garmin didn't accept that code. Check it and try again.") from e
+    _web_login.clear()
+    _finish_web_login(pending["client"])
 
 
 def _save_raw(activity_id: int, name: str, data) -> None:

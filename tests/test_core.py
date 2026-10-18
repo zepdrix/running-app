@@ -305,6 +305,9 @@ def test_plan_actuals(conn):
     assert p["sessions"][2]["actual"][0]["kind"] == "intervals"
     assert "Sessions:" in plan.as_text(conn) and plan.as_text(conn).startswith("Zones...")
 
+    recent = plan.recent_with_actuals(conn, days=2, today=date(2026, 10, 5))  # what the coach sees
+    assert [(s["date"], s["state"]) for s in recent] == [("2026-10-03", "done"), ("2026-10-04", "harder"), ("2026-10-05", "today")]
+
 
 def test_plan_api(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
@@ -1054,3 +1057,257 @@ def test_garmin_workout_api(tmp_path, monkeypatch):
     assert client.delete("/api/garmin/workouts/2026-10-06").json()["sessions"][0]["garmin"]["state"] == "sent"  # a draft-only delete
     assert client.delete("/api/garmin/workouts/2026-10-06?sent=true").json()["sessions"][0]["garmin"]["state"] == "none"
     assert garmin.deleted == [111]
+
+
+# ---------- Garmin or Strava: one source, set up in the browser ----------
+STRAVA_RUN = {
+    "id": 501, "name": "Morning Run", "sport_type": "Run", "type": "Run", "workout_type": 0, "trainer": False,
+    "start_date": "2026-10-01T21:05:09Z", "start_date_local": "2026-10-01T17:05:09Z",
+    "distance": 7390.0, "moving_time": 2900, "elapsed_time": 3100, "total_elevation_gain": 40.0,
+    "average_speed": 2.55, "average_heartrate": 144.2, "max_heartrate": 178, "average_cadence": 84.5,
+}
+
+
+def test_strava_activity_becomes_the_apps_activity(conn):
+    from runapp import strava
+
+    store.upsert_summary(conn, strava.to_summary(STRAVA_RUN))
+    store.upsert_summary(conn, strava.to_summary({**STRAVA_RUN, "id": 502, "workout_type": 1, "name": "Park 5k"}))
+    store.upsert_summary(conn, strava.to_summary({**STRAVA_RUN, "id": 503, "trainer": True}))
+    store.upsert_summary(conn, strava.to_summary({"id": 504, "sport_type": "WeightTraining", "start_date_local": "2026-10-02T18:00:00Z", "moving_time": 1200}))
+    store.upsert_summary(conn, strava.to_summary({"id": 505, "sport_type": "StandUpPaddling", "start_date_local": "2026-10-03T18:00:00Z"}))
+    rows = {r["id"]: r for r in conn.execute("SELECT * FROM activities")}
+    run = rows[501]
+    assert (run["type"], run["is_run"], run["start_local"], run["start_gmt"]) == ("running", 1, "2026-10-01 17:05:09", "2026-10-01 21:05:09")
+    assert (run["duration_s"], run["moving_s"], run["avg_cadence"]) == (2900, 2900, 169.0)  # moving time; both feet's steps
+    assert (rows[502]["event_type"], rows[502]["duration_s"]) == ("race", 3100)              # a race is timed start to finish
+    assert analysis.workout_kind(rows[502]) == "race"
+    assert rows[503]["type"] == "treadmill_running"                                          # kept out of GPS best efforts
+    assert (rows[504]["type"], rows[504]["is_run"]) == ("strength_training", 0)              # ticks off a strength session
+    assert rows[505]["type"] == "stand_up_paddling"
+
+    streams = {"time": {"data": [0, 1, 2]}, "distance": {"data": [0.0, 3.0, 6.1]}, "heartrate": {"data": [120, 121, 122]},
+               "cadence": {"data": [84, 85, 85]}, "latlng": {"data": [[40.66, -73.97], [40.66, -73.97], [40.661, -73.97]]}}
+    samples = strava.to_samples(streams)
+    assert [(s.t, s.distance_m, s.hr, s.cadence, s.lat) for s in samples][1] == (1.0, 3.0, 121, 170, 40.66)
+    assert strava.to_samples([{"type": k, **v} for k, v in streams.items()])[2].distance_m == 6.1  # the API's other shape
+    assert strava.to_samples({}) == [] and strava.to_samples(None) == []
+    (lap,) = strava.to_laps([{"distance": 1000.0, "elapsed_time": 270, "moving_time": 268, "average_speed": 3.7, "average_heartrate": 171.0, "average_cadence": 90}])
+    assert (lap.distance_m, lap.duration_s, lap.avg_speed_mps, lap.avg_hr, lap.cadence_spm) == (1000.0, 270, 3.7, 171.0, 180)
+
+
+class FakeStrava:
+    """Stands in for Strava's web API: `request(url, form, token)` -> (json, headers)."""
+
+    def __init__(self, activities, usage="1,1"):
+        self.activities, self.usage, self.calls, self.limit_after = activities, usage, [], None
+
+    def __call__(self, url, data=None, token=None):
+        from runapp import strava
+
+        self.calls.append(url)
+        if url == strava.TOKEN_URL:
+            self.token_request = data
+            return {"access_token": "new-access", "refresh_token": "new-refresh", "expires_at": 2_000_000_000,
+                    "athlete": {"id": 9, "firstname": "Lu"}}, {}
+        assert token, "API requests carry the access token"
+        if self.limit_after is not None and len([c for c in self.calls if "/activities/" in c]) > self.limit_after:
+            raise strava.RateLimited(daily=True)
+        headers = {"X-ReadRateLimit-Limit": "100,1000", "X-ReadRateLimit-Usage": self.usage}
+        if "/athlete/activities" in url:
+            page = int(url.split("page=")[1].split("&")[0])
+            return (self.activities if page == 1 else []), headers
+        if url.endswith("/laps"):
+            return [{"distance": 1000.0, "elapsed_time": 300, "average_speed": 3.33, "average_heartrate": 150.0}], headers
+        if "/streams" in url:
+            if "/activities/999/" in url:
+                raise LookupError(url)  # entered by hand: nothing recorded
+            n = 1500
+            return {"time": {"data": list(range(n))}, "distance": {"data": [i * 3.0 for i in range(n)]},
+                    "heartrate": {"data": [150] * n}}, headers
+        raise AssertionError(url)
+
+
+def strava_client(fake, expires_at=2_000_000_000):
+    import json as _json
+
+    from runapp import source, strava
+
+    source.strava_token_path().parent.mkdir(parents=True, exist_ok=True)
+    source.strava_token_path().write_text(_json.dumps({"client_id": "123", "client_secret": "s" * 40, "access_token": "old-access",
+                                                       "refresh_token": "old-refresh", "expires_at": expires_at}))
+    return strava.Client(request=fake, now=lambda: 1_900_000_000)
+
+
+def test_strava_sync_downloads_runs_and_resumes(conn):
+    from runapp import strava
+
+    acts = [STRAVA_RUN, {**STRAVA_RUN, "id": 999, "name": "Typed in by hand", "start_date_local": "2026-09-30T08:00:00Z"},
+            {"id": 700, "sport_type": "Ride", "start_date_local": "2026-09-29T08:00:00Z", "distance": 20000.0, "moving_time": 3600}]
+    fake = FakeStrava(acts)
+    message = strava.run_sync(conn, strava_client(fake), progress=lambda m: None)
+    assert message == "Synced 2 new activities"
+    rows = {r["id"]: r for r in conn.execute("SELECT * FROM activities")}
+    assert all(r["detail_synced"] for r in rows.values())
+    assert rows[501]["has_samples"] == 1 and rows[999]["has_samples"] == 0
+    assert not any("/activities/700/" in c for c in fake.calls)  # a ride needs nothing beyond its summary
+    assert conn.execute("SELECT COUNT(*) FROM laps WHERE activity_id = 501").fetchone()[0] == 1
+    assert round(rows[501]["z2_s"]) == 1500  # 150 bpm is Norwegian zone 2 at max HR 190: zones come from the stream
+    assert conn.execute("SELECT time_s FROM best_efforts WHERE activity_id = 501 AND label = '1k'").fetchone()[0] == pytest.approx(333.3, abs=1)
+
+    # Nothing new: one request for the list, none for details.
+    fake.calls.clear()
+    assert strava.run_sync(conn, strava_client(fake), progress=lambda m: None) == "Synced 0 new activities"
+    assert len(fake.calls) == 1
+
+    # The daily allowance runs out part-way: what's done is kept, the rest waits for the next sync.
+    conn.execute("UPDATE activities SET detail_synced = 0, has_samples = 0 WHERE is_run = 1")
+    fake.limit_after = 2  # enough for one run's streams and laps
+    message = strava.run_sync(conn, strava_client(fake), progress=lambda m: None)
+    assert message.startswith("Synced 1 new activities. Strava's daily limit is used up, so the other 1")
+    assert [r["detail_synced"] for r in conn.execute("SELECT detail_synced FROM activities WHERE is_run = 1 ORDER BY start_local DESC")] == [1, 0]
+
+
+def test_strava_waits_for_the_next_window_and_refreshes_its_token(conn):
+    from runapp import source, strava
+
+    # The 15-minute allowance is nearly used: the sync sleeps to the next quarter hour, then carries on.
+    fake = FakeStrava([STRAVA_RUN], usage="98,200")
+    slept, said = [], []
+    message = strava.run_sync(conn, strava_client(fake), progress=said.append, sleep=slept.append, now=lambda: 1_900_000_000)
+    assert message == "Synced 1 new activities"
+    assert slept and all(0 < s <= 15 * 60 + 5 for s in slept)
+    assert any("Carrying on at" in m for m in said)
+    assert strava._used_up({"x-readratelimit-limit": "100,1000", "x-readratelimit-usage": "40,998"}) == "daily"
+    assert strava._used_up({"X-RateLimit-Limit": "200,2000", "X-RateLimit-Usage": "12,345"}) is None
+
+    # An access token about to expire is renewed first, and the new pair is saved.
+    fake = FakeStrava([])
+    client = strava_client(fake, expires_at=1_900_000_050)
+    client.get("/athlete/activities", page=1, per_page=100)
+    assert fake.calls[0] == strava.TOKEN_URL and fake.token_request["grant_type"] == "refresh_token"
+    assert fake.token_request["refresh_token"] == "old-refresh"
+    assert '"access_token": "new-access"' in source.strava_token_path().read_text()
+    assert oct(source.strava_token_path().stat().st_mode)[-3:] == "600"
+    source.strava_token_path().unlink()
+    with pytest.raises(strava.NotConnected):
+        strava.Client()
+
+
+def test_strava_sign_in_checks_the_keys_and_the_permission():
+    from runapp import source, strava
+
+    with pytest.raises(strava.StravaError, match="number"):
+        strava.authorize_url("my app", "a" * 40, "http://localhost:8000/setup/strava/callback")
+    with pytest.raises(strava.StravaError, match="Client Secret"):
+        strava.authorize_url("123", "nope", "http://localhost:8000/setup/strava/callback")
+    url = strava.authorize_url(" 123 ", "ab" * 20, "http://localhost:8000/setup/strava/callback")
+    assert url.startswith("https://www.strava.com/oauth/authorize?client_id=123&")
+    assert "redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fsetup%2Fstrava%2Fcallback" in url and "scope=read%2Cactivity%3Aread_all" in url
+    state = url.split("state=")[1]
+    fake = FakeStrava([])
+    with pytest.raises(strava.StravaError, match="permission"):
+        strava.finish_sign_in(state, "code", "read", fake)  # the activity box was unticked
+    with pytest.raises(strava.StravaError, match="expired"):
+        strava.finish_sign_in(state, "code", "read,activity:read_all", fake)  # a state works once
+    state = strava.authorize_url("123", "ab" * 20, "http://localhost:8000/setup/strava/callback").split("state=")[1]
+    with pytest.raises(strava.StravaError, match="expired"):
+        strava.finish_sign_in("someone-elses-state", "code", "read,activity:read_all", fake)
+    assert strava.finish_sign_in(state, "the-code", "read,activity:read_all", fake)["firstname"] == "Lu"
+    assert fake.token_request == {"client_id": "123", "client_secret": "ab" * 20, "code": "the-code", "grant_type": "authorization_code"}
+    assert '"refresh_token": "new-refresh"' in source.strava_token_path().read_text()
+
+
+def test_one_source_at_a_time_and_disconnect(conn):
+    from runapp import garmin_workouts as gw, plan, races, source
+
+    assert source.current() == "garmin" and not source.connected()  # chosen, but no saved sign-in yet
+    config.TOKEN_PATH.write_text("{}")
+    assert source.connected()
+    with pytest.raises(source.SourceError, match="connected to Garmin"):
+        source.choose("strava")
+    source.choose("garmin")  # choosing the same one again is fine (signing in again)
+
+    add_run(conn, 1, "2026-10-01 07:00:00", 5)
+    races.save(conn, {"date": "2026-10-01", "name": "Park 5k", "distance_m": 5000, "effort": "all_out"})
+    plan.save(conn, "Notes", [{"date": "2026-10-06", "kind": "easy", "title": "40 min easy"}])
+    assert conn.execute("SELECT activity_id FROM races").fetchone()[0] == 1
+    assert "garmin" in plan.with_actuals(conn, date(2026, 10, 5))["sessions"][0]
+
+    source.disconnect(conn)
+    assert source.current() is None and not config.TOKEN_PATH.exists()
+    counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("activities", "samples", "best_efforts", "races", "plan_sessions")}
+    assert counts == {"activities": 0, "samples": 0, "best_efforts": 0, "races": 1, "plan_sessions": 1}  # what you entered stays
+    assert conn.execute("SELECT activity_id FROM races").fetchone()[0] is None
+
+    source.choose("strava")
+    assert source.info()["label"] == "Strava" and not source.info()["send_to_watch"]
+    assert "garmin" not in plan.with_actuals(conn, date(2026, 10, 5))["sessions"][0]  # no watch to send to
+    assert "Strava" in source.prompt_note() and "Strava" in __import__("runapp.coach", fromlist=["x"]).context_sections("", "")
+    with pytest.raises(source.SourceError):
+        source.choose("garmin")
+
+
+def test_setup_in_the_browser(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runapp import server, source, strava, sync
+    from runapp.server import app
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
+    started = []
+    monkeypatch.setattr(server, "_start_sync", lambda full=False: started.append("sync"))
+    (config.DATA_DIR / "source.json").unlink()  # a brand-new install
+    client = TestClient(app, follow_redirects=False)
+    assert client.get("/").headers["location"] == "/setup"
+    assert client.get("/setup").status_code == 200
+    state = client.get("/api/setup").json()
+    assert state["source"] is None and not state["connected"] and set(state["sources"]) == {"garmin", "strava"}
+
+    # Garmin: wrong password, then the right one with an emailed code.
+    class FakeGarmin:
+        def __init__(self, email, password, return_on_mfa=False):
+            self.email, self.password, self.client = email, password, self
+
+        def login(self):
+            if self.password != "right":
+                raise sync.GarminConnectAuthenticationError("401")
+            return "needs_mfa", {"ticket": 1}
+
+        def resume_login(self, state, code):
+            if (state, code) != ({"ticket": 1}, "123456"):
+                raise RuntimeError("bad code")
+
+        def dump(self, path):
+            open(path, "w").write('{"session": "from garmin"}')
+
+    monkeypatch.setattr(sync, "Garmin", FakeGarmin)
+    monkeypatch.setattr(sync, "_garmin_reachable", lambda: True)
+    bad = client.post("/api/setup/garmin", json={"email": "me@example.com", "password": "wrong"})
+    assert bad.status_code == 401 and "didn't accept" in bad.json()["detail"]
+    assert client.post("/api/setup/garmin/mfa", json={"code": "123456"}).status_code == 401  # nothing waiting for a code
+    assert client.post("/api/setup/garmin", json={"email": "me@example.com", "password": "right"}).json() == {"connected": False, "mfa": True}
+    assert source.current() is None and not started  # not connected until the code is in
+    assert client.post("/api/setup/garmin/mfa", json={"code": "000000"}).status_code == 401
+    assert client.post("/api/setup/garmin/mfa", json={"code": "123456"}).json() == {"connected": True}
+    assert source.current() == "garmin" and source.connected() and started == ["sync"]
+    assert "right" not in config.TOKEN_PATH.read_text()  # the session is saved, never the password
+    assert client.get("/").status_code == 200
+    assert client.get("/api/dashboard").json()["source"]["label"] == "Garmin"
+
+    # Strava is refused while Garmin is connected...
+    keys = {"client_id": "123", "client_secret": "ab" * 20}
+    assert client.post("/api/setup/strava", json=keys).status_code == 409
+    # ...and allowed after disconnecting.
+    assert client.post("/api/source/disconnect").json()["source"] is None
+    url = client.post("/api/setup/strava", json=keys).json()["authorize_url"]
+    assert "redirect_uri=http%3A%2F%2Ftestserver%2Fsetup%2Fstrava%2Fcallback" in url
+    state = url.split("state=")[1]
+    refused = client.get("/setup/strava/callback?error=access_denied")
+    assert refused.headers["location"].startswith("/setup?error=") and source.current() is None
+    monkeypatch.setattr(strava, "_request", FakeStrava([]))
+    done = client.get(f"/setup/strava/callback?state={state}&code=abc&scope=read,activity:read_all")
+    assert done.headers["location"] == "/" and source.current() == "strava" and source.connected() and started == ["sync", "sync"]
+    assert client.get("/api/dashboard").json()["source"]["activity_url"] == "https://www.strava.com/activities/{id}"
+    assert client.post("/api/setup/garmin", json={"email": "me@example.com", "password": "right"}).status_code == 409
+    assert client.post("/api/garmin/workouts/2026-10-06/build").status_code == 400  # no watch to send to

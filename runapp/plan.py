@@ -104,6 +104,15 @@ def with_actuals(conn: sqlite3.Connection, today: date | None = None) -> dict:
     return p
 
 
+def recent_with_actuals(conn: sqlite3.Connection, days: int = 21, today: date | None = None) -> list[dict]:
+    """Planned sessions from the last few days up to today, each with what was done (for the coach)."""
+    today = today or date.today()
+    since = (today - timedelta(days=days)).isoformat()
+    keep = ["date", "kind", "title", "details", "state", "actual"]
+    return [{k: s.get(k) for k in keep} for s in with_actuals(conn, today)["sessions"]
+            if since <= s["date"] <= today.isoformat()]
+
+
 # ---------- one-time conversion of the old free-text plan ----------
 
 LINE = re.compile(r"^\s*-\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*\s+([A-Z][a-z]{2})\w*\s+(\d{1,2}):\s*(.+)$")

@@ -266,6 +266,8 @@ img.brand-mobile { display: none; width: 40px; height: 40px; border-radius: 10px
 /* Settings are inline up here on wide screens; the sheet parts only exist on phones. */
 #menu-btn, .menu-title, .menu-label, .menu-note, .menu-done { display: none; }
 .menu-row { display: flex; align-items: center; gap: 10px; }
+.menu-source .menu-label { display: none; }
+.menu-source a.button { font-size: 14px; padding: 6px 10px; border-radius: 8px; color: var(--text-primary); background: var(--surface); white-space: nowrap; }
 .menu-backdrop { position: fixed; inset: 0; z-index: 12; background: rgba(8, 10, 16, 0.55); }
 
 /* Pages within a section (Progress: Training / Workouts / Form) */
@@ -836,7 +838,9 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
   }
   .header-actions.open { display: flex; }
   .menu-title { display: block; font-size: 18px; }
-  .menu-label { display: inline; font-weight: 600; flex: 1; }
+  .menu-label, .menu-source .menu-label { display: inline; font-weight: 600; flex: 1; }
+  .menu-source .menu-label { font-weight: 500; }
+  .menu-source a.button { min-height: 42px; padding: 8px 16px; font-size: 15px; border-radius: 12px; }
   .menu-note { display: block; margin: -8px 0 0; font-size: 12px; color: var(--muted); }
   .menu-done { display: block; }
   .header-actions > button { min-height: 46px; border-radius: 12px; font-size: 15px; }
@@ -979,6 +983,38 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
   .msg { max-width: 96%; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- setup page (first run, reconnect, switch): one column, phone first ---------- */
+.setup { max-width: 560px; margin: 0 auto; padding: max(20px, calc(env(safe-area-inset-top) + 12px)) 16px calc(32px + env(safe-area-inset-bottom)); display: grid; gap: 16px; }
+.setup-head { display: flex; align-items: center; gap: 14px; }
+.setup-head h1 { font-size: 24px; }
+.setup-head .sub { margin: 4px 0 0; }
+.setup-step { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 17px; margin-bottom: 12px; }
+.step-n { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--button); color: #fff; font-size: 14px; flex-shrink: 0; }
+.choices { display: grid; gap: 10px; }
+.choice { display: grid; gap: 4px; text-align: left; padding: 16px; cursor: pointer; border-width: 2px; }
+.choice[aria-checked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+.choice-name { font-family: var(--font-display); font-weight: 600; font-size: 17px; }
+.choice-what { color: var(--text-secondary); font-size: 13.5px; font-weight: 400; }
+.setup-note { margin: 10px 2px 0; }
+.setup-card { padding: 18px; }
+.setup-card h2 { font-size: 20px; }
+.setup-form { display: grid; gap: 12px; }
+.setup-form label { display: grid; gap: 5px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.setup-form input { width: 100%; font-size: 16px; padding: 11px 12px; border-radius: 10px; }
+.setup-form .sub, .setup-form p { margin: 0; }
+button.big, a.button.big { min-height: 48px; font-size: 16px; border-radius: 12px; padding: 10px 18px; }
+a.button { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border: 1px solid var(--border); }
+a.button.primary { background: var(--button); border-color: var(--button); color: #fff; font-weight: 600; }
+.setup-card > a.button { width: 100%; margin: 6px 0 4px; }
+.setup-list { margin: 0 0 14px; padding-left: 22px; display: grid; gap: 8px; color: var(--text-secondary); }
+.setup-list a { color: var(--accent); }
+.setup-more { border-top: 1px solid var(--grid); margin-top: 12px; padding-top: 4px; }
+.setup-more summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+.setup-more .sub { margin: 0 0 12px; }
+.setup-more button.danger { min-height: 44px; border-radius: 12px; padding: 8px 16px; border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+.setup-error { border-left-color: var(--critical); color: var(--text-primary); }
+.setup-coach a { color: var(--accent); }
 
 /* ---------- printing the pacing card ---------- */
 @media print {

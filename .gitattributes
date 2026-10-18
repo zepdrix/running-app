@@ -1,0 +1,3 @@
+# Windows needs its line endings in the launcher; everything else stays as written.
+*.bat text eol=crlf
+*.command text eol=lf
