@@ -80,6 +80,7 @@ document.addEventListener("click", (e) => {
   document.querySelectorAll("[data-heat]").forEach((x) => x.setAttribute("aria-pressed", String((x.dataset.heat === "1") === state.heatAdj)));
   // Redraw from the data already loaded; nothing needs fetching again.
   if (state.tab === "training") renderCharts();
+  if (detail.kind === "efficiency") renderDetail();
   if (state.tab === "workouts" && woData) { renderWorkoutTrend(); renderWorkoutDetail(); }
 });
 
@@ -101,6 +102,7 @@ const ICONS = {
   shoe: '<path d="M3 17h17a2 2 0 0 0 2-2v-.5a2.5 2.5 0 0 0-2-2.45L15 11l-3-4H9v2H6V6H3z"/><path d="M3 17v2h19v-2M11.5 9l-1.5 1.5M13.5 11.5 12 13"/>',
   dumbbell: '<path d="M6.5 6.5v11M3.5 9.5v5M17.5 6.5v11M20.5 9.5v5M6.5 12h11"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+  expand: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
   leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z"/><path d="M2 21c0-3 1.9-5.4 5.2-6"/>',
 };
 const icon = (name) =>
@@ -147,6 +149,7 @@ async function load() {
     }
     return;
   }
+  Object.assign(detail, { days: null, daysFor: null, daysFailed: false }); // new data or a new range
   render();
   if (!first && !planEditing) loadPlan(); // new data can change what was done on each planned day
 }
@@ -177,6 +180,7 @@ function render() {
   renderActivities(d.activities);
   renderCharts();
   if (planLoaded && !planEditing) renderPlan(); // distances there follow the unit setting
+  if (detail.kind) renderDetail(); // theme, units or new data: redraw in place, keeping the zoom
 }
 
 // Charts can only measure themselves when visible, so draw just the active tab's.
@@ -439,8 +443,9 @@ function barsWindow(bucket, rows) {
 const spanBucket = (min, max) => (max - min > 730 ? "month" : max - min > 56 ? "week" : "day");
 
 // Shared x-scale: one tick per bucket (at bar centres, or bucket starts for points), thinned by autoskip so labels never overlap.
+// bucket "auto" (points, not bars) sizes the ticks by the days shown, so zooming in brings finer labels.
 function timeAxis(bucket, min, max, at = "centre") {
-  const B = BUCKETS[bucket];
+  const pick = (scale) => (bucket === "auto" ? spanBucket(scale.min, scale.max) : bucket);
   return {
     type: "linear",
     bounds: "data", // the default "ticks" would widen min/max to round numbers
@@ -450,12 +455,12 @@ function timeAxis(bucket, min, max, at = "centre") {
     border: { color: css("--axis") },
     ticks: {
       color: css("--muted"), maxRotation: 0, autoSkip: true, autoSkipPadding: 16,
-      callback: (v) => B.tick(dayIso(B.start(Math.floor(v)))),
+      callback(v) { const B = BUCKETS[pick(this)]; return B.tick(dayIso(B.start(Math.floor(v)))); },
     },
     afterBuildTicks(scale) {
-      const ticks = [];
+      const b = pick(scale), B = BUCKETS[b], ticks = [];
       for (let s = B.start(Math.floor(scale.min)); s <= scale.max; s = B.next(s)) {
-        const v = at === "centre" ? bucketCentre(bucket, dayIso(s)) : s;
+        const v = at === "centre" ? bucketCentre(b, dayIso(s)) : s;
         if (v >= scale.min && v <= scale.max) ticks.push({ value: v });
       }
       scale.ticks = ticks;
@@ -502,7 +507,8 @@ function stackedBarsConfig({ rows, bucket, win, series, yTick, label, afterBody,
           ...base.plugins.tooltip,
           filter,
           itemSort: (a, b) => b.datasetIndex - a.datasetIndex,
-          callbacks: { title: (items) => bucketTitle(bucket, items[0].raw.x), label, afterBody },
+          // items can be empty: a day or week with nothing to show after the filter
+          callbacks: { title: (items) => (items[0] ? bucketTitle(bucket, items[0].raw.x) : ""), label, afterBody },
         },
       },
     }),
@@ -536,7 +542,7 @@ function weeklyConfig(rows, bucket, win, { goals = [], maxBarThickness } = {}) {
     filter: (item) => item.raw.y > 0,
     label: (item) => ` ${item.dataset.label}: ${item.raw.y} ${unitLabel()}`,
     afterBody: (items) => {
-      const r = items[0].raw.r;
+      const r = items[0]?.raw.r;
       return r ? [`Total ${fmtDist(r.distance_m)} ${unitLabel()} · ${r.runs} runs · ${fmtTime(r.duration_s)}`] : [];
     },
   });
@@ -617,7 +623,7 @@ function efficiencyConfig(points, win) {
     options: baseOptions({
       interaction: { mode: "nearest", intersect: false },
       scales: {
-        x: timeAxis(spanBucket(win.min, win.max), win.min, win.max, "start"),
+        x: timeAxis("auto", win.min, win.max, "start"),
         y: { beginAtZero: false, grid: { color: css("--grid") }, border: { display: false }, ticks: { color: css("--muted") } },
       },
       plugins: {
@@ -625,7 +631,7 @@ function efficiencyConfig(points, win) {
         tooltip: {
           ...baseOptions().plugins.tooltip,
           callbacks: {
-            title: (items) => fmtDate(dayIso(items[0].raw.x)),
+            title: (items) => (items[0] ? fmtDate(dayIso(items[0].raw.x)) : ""),
             label: (item) => {
               const p = item.raw.p;
               if (!p) return ` ${item.dataset.label}: ${item.raw.y}`;
@@ -674,8 +680,8 @@ function monthlyConfig(rows, win, { maxBarThickness = 24 } = {}) {
         tooltip: {
           ...base.plugins.tooltip,
           callbacks: {
-            title: (items) => bucketTitle("month", items[0].raw.x),
-            afterBody: (items) => `${items[0].raw.r.runs} runs · ${fmtTime(items[0].raw.r.duration_s)}`,
+            title: (items) => (items[0] ? bucketTitle("month", items[0].raw.x) : ""),
+            afterBody: (items) => (items[0] ? `${items[0].raw.r.runs} runs · ${fmtTime(items[0].raw.r.duration_s)}` : ""),
           },
         },
       },
@@ -694,6 +700,230 @@ function monthlySubtitle(d) {
 function renderMonthly(d) {
   document.getElementById("monthly-sub").textContent = monthlySubtitle(d);
   draw("monthly-chart", monthlyConfig(d.monthly, barsWindow("month", d.monthly)));
+}
+
+// ---------- chart detail view ----------
+// One of the four range charts full screen, zoomable along time: pinch, wheel, + and −, arrow keys; drag to pan.
+// Bars refine from months to weeks to days as you zoom in; the window is kept in day numbers across the switch.
+const detailDialog = document.getElementById("chart-detail");
+const detailCanvas = document.getElementById("detail-chart");
+const detail = { kind: null, bucket: null, win: null, slice: null, days: null, daysFor: null, daysFailed: false, daysLoading: false };
+const MIN_RANGE = { weekly: 7, zones: 7, efficiency: 14, monthly: 90 }; // the closest zoom, in days
+const DETAIL = {
+  weekly: { title: "Weekly distance", aria: "Running distance by kind of run, zoomable" },
+  zones: { title: "Time in heart-rate zones", aria: "Hours in each heart-rate zone, zoomable" },
+  efficiency: { title: "Aerobic efficiency", aria: "Aerobic efficiency over time, zoomable" },
+  monthly: { title: "Monthly distance", aria: "Monthly running distance, zoomable" },
+};
+const DETAIL_LEVELS = { month: "Monthly bars", week: "Weekly bars", day: "Daily bars", points: "Each dot is a run" };
+const detailChart = () => state.charts["detail-chart"];
+const hasDays = () => detail.days && detail.daysFor === state.weeks;
+
+// Bar size for the days on screen: >2 years months, 9 weeks–2 years weeks, ≤8 weeks days. Day rows load on first use.
+function pickBucket(kind, win) {
+  if (kind === "monthly") return "month";
+  if (kind === "efficiency") return "points"; // one dot per run at every zoom
+  const b = spanBucket(win.min, win.max);
+  if (b === "month" && !state.data.monthly[0]?.zones_s) return "week"; // a reply saved by an older version
+  if (b !== "day" || hasDays()) return b;
+  if (!detail.daysFailed) loadDays();
+  return "week";
+}
+
+function rowsFor(kind, bucket) {
+  const d = state.data;
+  if (kind === "monthly") return d.monthly;
+  return bucket === "day" ? detail.days : bucket === "month" ? rangeMonths(d) : d.weekly;
+}
+
+// The whole range. Weekly and zones use the weeks' window (range start to the end of this week) at every bar size,
+// so the view never jumps when bars switch; monthly bars at the edges may be cut by part of a month.
+function fullWindow(kind) {
+  const d = state.data;
+  if (kind === "efficiency") return efficiencyWindow(d);
+  if (kind === "monthly") return barsWindow("month", d.monthly);
+  return barsWindow("week", d.weekly);
+}
+
+function clampWindow(win, full) {
+  const span = Math.min(win.max - win.min, full.max - full.min);
+  const min = Math.max(full.min, Math.min(win.min, full.max - span));
+  return { min, max: min + span };
+}
+
+function windowText(win) {
+  const a = dayIso(Math.ceil(win.min)), b = dayIso(Math.floor(win.max));
+  if (win.max - win.min > 120) return `${fmtDay(a, { month: "short", year: "numeric" })} – ${fmtDay(b, { month: "short", year: "numeric" })}`;
+  return `${fmtDay(a, { month: "short", day: "numeric" })} – ${fmtDay(b, { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function renderDetail({ reset = false } = {}) {
+  const d = state.data, kind = detail.kind;
+  if (!d || !kind) return;
+  const full = fullWindow(kind);
+  const win = reset || !detail.win ? full : clampWindow(detail.win, full);
+  const bucket = pickBucket(kind, win);
+  detail.bucket = bucket;
+  detail.win = win;
+  let rows = rowsFor(kind, bucket);
+  detail.slice = null;
+  if (bucket === "day") {
+    // Years of days are thousands of bars to move on every pan: draw the days around the view and refill as it moves.
+    const span = win.max - win.min;
+    detail.slice = { min: Math.max(full.min, win.min - 2 * span), max: Math.min(full.max, win.max + 2 * span) };
+    rows = rows.filter((r) => { const x = dayNum(r.day); return x >= detail.slice.min - 1 && x <= detail.slice.max + 1; });
+  }
+  const opts = { maxBarThickness: 48 };
+  const cfg =
+    kind === "weekly" ? weeklyConfig(rows, bucket, full, { ...opts, goals: d.goals }) :
+    kind === "zones" ? zoneConfig(rows, bucket, full, opts) :
+    kind === "efficiency" ? efficiencyConfig(d.efficiency, full) :
+    monthlyConfig(rows, full, opts);
+  cfg.options.plugins.zoom = {
+    limits: { x: { min: "original", max: "original", minRange: MIN_RANGE[kind] } },
+    pan: { enabled: true, mode: "x", threshold: 10, onPanComplete: onView },
+    zoom: { wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: "x", onZoomComplete: onView },
+  };
+  draw("detail-chart", cfg);
+  // Zoom from the full range rather than starting there, so "original" (and Reset) stays the whole range.
+  if (win.min > full.min || win.max < full.max) detailChart().zoomScale("x", win, "none");
+  document.getElementById("detail-legend").innerHTML =
+    kind === "weekly" ? weeklyLegend(bucket, d.goals) : kind === "zones" ? zoneLegend() : kind === "efficiency" ? efficiencyLegend(d.efficiency) : "";
+  fitY();
+  updateDetailControls();
+}
+
+// After a zoom or pan (at most once a frame): switch bar size if the span calls for it, else refit the y-axis.
+let viewQueued = false;
+function onView() {
+  if (viewQueued) return;
+  viewQueued = true;
+  requestAnimationFrame(() => {
+    viewQueued = false;
+    const chart = detailChart();
+    if (!chart || !detail.kind) return;
+    detail.win = { min: chart.scales.x.min, max: chart.scales.x.max };
+    const sl = detail.slice;
+    if (pickBucket(detail.kind, detail.win) !== detail.bucket || (sl && (detail.win.min < sl.min || detail.win.max > sl.max))) return renderDetail();
+    fitY();
+    updateDetailControls();
+  });
+}
+
+// The y-axis fits what's on screen: the tallest visible bar (or goal line), or the visible dots' spread.
+function fitY() {
+  const chart = detailChart();
+  if (!chart) return;
+  const { min, max } = chart.scales.x;
+  const zoomed = chart.isZoomedOrPanned();
+  const y = chart.options.scales.y;
+  const inView = (p) => p.x >= min && p.x <= max;
+  if (detail.kind === "efficiency") {
+    const ys = chart.data.datasets.flatMap((ds) => ds.data.filter(inView).map((p) => p.y));
+    if (zoomed && ys.length) {
+      const lo = Math.min(...ys), hi = Math.max(...ys), pad = (hi - lo) * 0.05 || 0.01;
+      Object.assign(y, { min: lo - pad, max: hi + pad });
+    } else Object.assign(y, { min: undefined, max: undefined });
+    // Dots shrink when many runs are on screen, so they don't paint over each other.
+    const runs = chart.data.datasets.find((ds) => ds.label === "Run");
+    const dense = runs.data.filter(inView).length > 300;
+    Object.assign(runs, { pointRadius: dense ? 2.5 : 4, pointBorderWidth: dense ? 0 : 2 });
+  } else {
+    let top = 0;
+    const totals = new Map();
+    for (const ds of chart.data.datasets) {
+      for (const p of ds.data) {
+        if (!inView(p)) continue;
+        if (ds.type === "line") top = Math.max(top, p.y);
+        else totals.set(p.x, (totals.get(p.x) || 0) + p.y);
+      }
+    }
+    for (const t of totals.values()) top = Math.max(top, t);
+    y.max = zoomed ? Math.max(1, Math.ceil(top * 1.1)) : undefined;
+  }
+  chart.update("none");
+}
+
+function updateDetailControls() {
+  const chart = detailChart();
+  const zoomed = !!chart && chart.isZoomedOrPanned();
+  detailDialog.querySelector('[data-zoom="reset"]').disabled = !zoomed;
+  detailDialog.querySelector('[data-zoom="out"]').disabled = !zoomed;
+  const level = document.getElementById("detail-level");
+  const wantsDays = detail.bucket === "week" && (detail.kind === "weekly" || detail.kind === "zones") &&
+    detail.win && spanBucket(detail.win.min, detail.win.max) === "day";
+  if (wantsDays && detail.daysFailed) level.textContent = "Daily bars need the Mac to be reachable";
+  else level.textContent = `${DETAIL_LEVELS[detail.bucket]} · ${windowText(detail.win)}`;
+}
+
+function zoomDetail(factor) {
+  const chart = detailChart();
+  if (!chart) return;
+  chart.zoom(factor, "none");
+  onView();
+}
+function panDetail(dir) {
+  const chart = detailChart();
+  if (!chart) return;
+  chart.pan({ x: dir * chart.chartArea.width / 4 }, undefined, "none");
+  onView();
+}
+function resetDetail() {
+  detailChart()?.resetZoom("none");
+  detail.win = null;
+  renderDetail({ reset: true });
+}
+
+detailDialog.querySelector(".detail-zoom").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-zoom]");
+  if (!b) return;
+  if (b.dataset.zoom === "reset") resetDetail();
+  else zoomDetail(b.dataset.zoom === "in" ? 1.5 : 1 / 1.5);
+});
+detailDialog.addEventListener("keydown", (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const act = { ArrowLeft: () => panDetail(1), ArrowRight: () => panDetail(-1), "+": () => zoomDetail(1.5), "=": () => zoomDetail(1.5), "-": () => zoomDetail(1 / 1.5) }[e.key];
+  if (!act) return;
+  e.preventDefault();
+  act();
+});
+
+function openDetail(kind) {
+  if (!state.data || !DETAIL[kind]) return;
+  Object.assign(detail, { kind, win: null, bucket: null });
+  document.getElementById("detail-title").textContent = DETAIL[kind].title;
+  detailCanvas.setAttribute("aria-label", DETAIL[kind].aria);
+  detailDialog.querySelector(".detail-heat").hidden = kind !== "efficiency";
+  detailDialog.showModal();
+  requestAnimationFrame(() => renderDetail({ reset: true })); // the canvas can only measure itself once it's showing
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-detail]");
+  if (b) openDetail(b.dataset.detail);
+});
+document.getElementById("detail-close").addEventListener("click", () => detailDialog.close());
+// Esc, the × button and Android's Back all end here.
+detailDialog.addEventListener("close", () => {
+  if (detailDialog.open) return; // already opened again
+  detailChart()?.destroy();
+  delete state.charts["detail-chart"];
+  Object.assign(detail, { kind: null, win: null, bucket: null, slice: null });
+});
+
+// Day rows are fetched the first time a chart zooms in to 8 weeks or less, for the current range.
+async function loadDays() {
+  if (detail.daysLoading) return;
+  const weeks = state.weeks;
+  detail.daysLoading = true;
+  try {
+    const res = await getJSON(`/api/days?weeks=${weeks}`);
+    if (weeks === state.weeks) Object.assign(detail, { days: res.days, daysFor: weeks });
+  } catch {
+    detail.daysFailed = true;
+  } finally {
+    detail.daysLoading = false;
+  }
+  if (detail.kind) renderDetail();
 }
 
 // ---------- tables ----------
@@ -801,6 +1031,7 @@ document.querySelectorAll(".range button").forEach((b) =>
   b.addEventListener("click", () => {
     state.weeks = b.dataset.weeks;
     try { localStorage.setItem("weeks", state.weeks); } catch {}
+    detail.win = null; // the detail view starts over at the whole new range
     load();
   })
 );
