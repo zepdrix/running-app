@@ -8,7 +8,7 @@
  * - Libraries (static/vendor) and fonts: cache first (their URLs are versioned).
  * - Anything that isn't a GET (coach messages, saves, sync, login) is never cached.
  */
-const VERSION = "v9"; // bump to drop old cached files (e.g. the old icon)
+const VERSION = "v10"; // bump to drop old cached files (e.g. the old icon)
 const SHELL = `runapp-shell-${VERSION}`;
 const DATA = `runapp-data-${VERSION}`;
 const LIBS = `runapp-libs-${VERSION}`;
@@ -23,7 +23,13 @@ const SHELL_FILES = [
   "/manifest.webmanifest",
 ];
 // The file names carry the version, so a cached copy never goes stale.
-const VENDOR_FILES = ["/static/vendor/chart-4.4.4.umd.min.js", "/static/vendor/marked-12.0.2.min.js", "/static/vendor/purify-3.1.6.min.js"];
+const VENDOR_FILES = [
+  "/static/vendor/chart-4.4.4.umd.min.js",
+  "/static/vendor/hammer-2.0.8.min.js",
+  "/static/vendor/chartjs-plugin-zoom-2.2.0.min.js",
+  "/static/vendor/marked-12.0.2.min.js",
+  "/static/vendor/purify-3.1.6.min.js",
+];
 const CACHED_API = ["/api/dashboard", "/api/status", "/api/plan", "/api/coach", "/api/coach/notes", "/api/races", "/api/workouts", "/api/form"];
 const API_TIMEOUT_MS = 5000;
 
