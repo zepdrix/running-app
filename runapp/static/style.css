@@ -564,7 +564,8 @@ button.danger { color: var(--critical-text); }
 dialog.pacing { width: min(620px, calc(100vw - 32px)); }
 
 /* chart detail view: one range chart, large, zoomable along time */
-.card-title .chart-expand { order: 10; flex-shrink: 0; }
+/* right after the title (the markup puts it there), so it stays on the title's line when the other controls wrap */
+.card-title .chart-expand { flex-shrink: 0; }
 .chart-expand .icon { width: 15px; height: 15px; }
 dialog.chart-detail {
   border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px;
@@ -998,7 +999,6 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
     width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; border-radius: 0; border: 0;
     padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   }
-  .card-title .chart-expand { order: 0; }
   .chart-expand, .detail-zoom button { min-width: 38px; min-height: 38px; }
   .sheet-form { padding: 16px; }
   .pace-table td, .pace-table th { padding: 8px 5px; white-space: normal; }
