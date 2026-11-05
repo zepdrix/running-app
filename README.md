@@ -98,6 +98,11 @@ chart that covers time: weekly distance, zones, efficiency and monthly distance 
 **All** starts at the week of your first run. Up to a year the charts show a bar per week; at 2 yr and All they show a
 bar per month, so they stay readable.
 
+The ⤢ button on each of those four charts opens it full screen. Pinch (phone) or scroll (computer), or use − and +, to
+zoom in on any stretch of time; drag (or the arrow keys) to move along it, and **Reset** to see the whole range again.
+As you zoom in the bars get finer: months when more than two years are on screen, weeks down to nine weeks, then days.
+Daily bars are fetched the first time you need them, so they need the Mac to be reachable.
+
 The ↻ button syncs Garmin; the sliders button holds the settings (km or miles, light or dark appearance, install, log out).
 
 ## Use it on your phone (Tailscale)
