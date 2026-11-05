@@ -136,6 +136,19 @@ def monthly(conn: sqlite3.Connection, months: int = 12, today: date | None = Non
     return list(out.values())
 
 
+def daily(conn: sqlite3.Connection, weeks: int, today: date | None = None) -> list[dict]:
+    """One row per date (runs or not) from the first Monday of the range to today, for zoomed-in charts."""
+    today = today or date.today()
+    first = range_start(weeks, today)
+    days = [first + timedelta(days=i) for i in range((today - first).days + 1)]
+    out = {d: _new_bucket("day", d.isoformat()) for d in days}
+    for r in _runs(conn, first):
+        b = out.get(_day(r["start_local"]))
+        if b:
+            _add_run(b, r)
+    return list(out.values())
+
+
 def load_ratio(conn: sqlite3.Connection, today: date | None = None) -> dict:
     """Acute:chronic ratio of running distance (last 7 days vs 28-day weekly average).
 
