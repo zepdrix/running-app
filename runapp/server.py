@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -304,18 +304,31 @@ def disconnect_source():
     return _setup_state()
 
 
+# A chart range: a number of weeks ending with this week, or "all" (from the week of the first run).
+WeeksParam = Query("26", pattern=r"^(all|[1-9][0-9]{0,3})$")
+
+
+def _range_weeks(conn, weeks: str) -> int:
+    return analysis.history_weeks(conn) if weeks == "all" else min(int(weeks), analysis.MAX_WEEKS)
+
+
 @app.get("/api/dashboard")
-def dashboard(weeks: int = 26):
+def dashboard(weeks: str = WeeksParam):
     conn = db.connect()
     try:
+        today = date.today()
+        n = _range_weeks(conn, weeks)
+        start = analysis.range_start(n, today)
         return {
             "demo": config.DEMO,
             "auth": auth.enabled(),
             "source": source.info(),
             "overview": analysis.overview(conn),
-            "weekly": analysis.weekly(conn, weeks),
-            "monthly": analysis.monthly(conn, 12),
-            "efficiency": analysis.efficiency(conn),
+            # Every range chart follows this: weekly, monthly (never under 12 months) and efficiency.
+            "range": {"weeks": n, "all": weeks == "all", "start": start.isoformat()},
+            "weekly": analysis.weekly(conn, n),
+            "monthly": analysis.monthly(conn, max(12, analysis.months_since(start))),
+            "efficiency": analysis.efficiency(conn, days=(today - start).days),
             "records": analysis.personal_records(conn),
             "predictions": analysis.predictions(conn),
             "goals": analysis.goal_progress(conn),
