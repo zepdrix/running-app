@@ -36,7 +36,8 @@ def main():
     p_serve.add_argument("--open", action="store_true", help="Open the app in your browser once it's running")
     p_serve.add_argument("--demo", action="store_true", help="Serve the synthetic demo database")
     p_serve.add_argument("--keep-awake", action="store_true", help="Stop the Mac from sleeping while the app runs (for phone access)")
-    sub.add_parser("demo", help="Create a synthetic demo database (data/demo/)")
+    p_demo = sub.add_parser("demo", help="Create a synthetic demo database (data/demo/)")
+    p_demo.add_argument("--days", type=int, default=365, help="How many days of history to generate")
     p_pw = sub.add_parser("password", help="Set the password needed to open the app (for phone access)")
     p_pw.add_argument("--remove", action="store_true", help="Remove the password (only safe if the app is local-only)")
     sub.add_parser("reparse", help="Re-read every saved FIT file (after an upgrade adds new fields); no downloads")
@@ -68,7 +69,7 @@ def main():
         use_demo_data()
         if config.DB_PATH.exists():
             config.DB_PATH.unlink()
-        n = demo.generate(db.connect())
+        n = demo.generate(db.connect(), days=args.days)
         print(f"Created {n} demo runs in {config.DB_PATH}. Run: .venv/bin/python -m runapp serve --demo")
     elif args.cmd == "password":
         import getpass

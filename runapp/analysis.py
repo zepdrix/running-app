@@ -60,34 +60,63 @@ def _runs(conn: sqlite3.Connection, since: date | None = None) -> list[sqlite3.R
     return conn.execute(sql + " ORDER BY start_local", params).fetchall()
 
 
-def weekly(conn: sqlite3.Connection, weeks: int = 26, today: date | None = None) -> list[dict]:
+# The longest range a chart can ask for (30 years), so "All" can't build an unbounded list.
+MAX_WEEKS = 1560
+
+
+def range_start(weeks: int, today: date | None = None) -> date:
+    """Monday of the first week in a range of `weeks` weeks ending with this week."""
+    return _monday(today or date.today()) - timedelta(weeks=weeks - 1)
+
+
+def history_weeks(conn: sqlite3.Connection, today: date | None = None) -> int:
+    """Weeks from the Monday of the first run to this week (at least 12, at most MAX_WEEKS): the "All" range."""
     today = today or date.today()
-    first = _monday(today) - timedelta(weeks=weeks - 1)
-    buckets = {
-        first + timedelta(weeks=i): {
-            "week": (first + timedelta(weeks=i)).isoformat(),
-            "distance_m": 0.0,
-            "duration_s": 0.0,
-            "runs": 0,
-            "long_run_m": 0.0,
-            "load": 0.0,
-            "zones_s": [0.0] * 5,
-            "by_kind_m": {k: 0.0 for k in WORKOUT_KINDS},
-        }
-        for i in range(weeks)
+    first = conn.execute("SELECT MIN(start_local) FROM activities WHERE is_run = 1").fetchone()[0]
+    if not first:
+        return 12
+    weeks = (_monday(today) - _monday(_day(first))).days // 7 + 1
+    return min(max(12, weeks), MAX_WEEKS)
+
+
+def months_since(start: date, today: date | None = None) -> int:
+    """Calendar months from start's month to today's month, both included."""
+    today = today or date.today()
+    return (today.year - start.year) * 12 + today.month - start.month + 1
+
+
+def _new_bucket(key_name: str, key: str) -> dict:
+    """Totals for one week, month or day of running."""
+    return {
+        key_name: key,
+        "distance_m": 0.0,
+        "duration_s": 0.0,
+        "runs": 0,
+        "long_run_m": 0.0,
+        "load": 0.0,
+        "zones_s": [0.0] * 5,
+        "by_kind_m": {k: 0.0 for k in WORKOUT_KINDS},
     }
+
+
+def _add_run(b: dict, r: sqlite3.Row) -> None:
+    b["distance_m"] += r["distance_m"] or 0
+    b["duration_s"] += r["duration_s"] or 0
+    b["runs"] += 1
+    b["long_run_m"] = max(b["long_run_m"], r["distance_m"] or 0)
+    b["load"] += r["training_load"] or 0
+    b["by_kind_m"][workout_kind(r)] += r["distance_m"] or 0
+    for z in range(5):
+        b["zones_s"][z] += r[f"z{z + 1}_s"] or 0
+
+
+def weekly(conn: sqlite3.Connection, weeks: int = 26, today: date | None = None) -> list[dict]:
+    first = range_start(weeks, today)
+    buckets = {first + timedelta(weeks=i): _new_bucket("week", (first + timedelta(weeks=i)).isoformat()) for i in range(weeks)}
     for r in _runs(conn, first):
         b = buckets.get(_monday(_day(r["start_local"])))
-        if not b:
-            continue
-        b["distance_m"] += r["distance_m"] or 0
-        b["duration_s"] += r["duration_s"] or 0
-        b["runs"] += 1
-        b["long_run_m"] = max(b["long_run_m"], r["distance_m"] or 0)
-        b["load"] += r["training_load"] or 0
-        b["by_kind_m"][workout_kind(r)] += r["distance_m"] or 0
-        for z in range(5):
-            b["zones_s"][z] += r[f"z{z + 1}_s"] or 0
+        if b:
+            _add_run(b, r)
     return list(buckets.values())
 
 
@@ -99,13 +128,11 @@ def monthly(conn: sqlite3.Connection, months: int = 12, today: date | None = Non
         keys.append(f"{y:04d}-{m:02d}")
         y, m = (y, m - 1) if m > 1 else (y - 1, 12)
     keys.reverse()
-    out = {k: {"month": k, "distance_m": 0.0, "duration_s": 0.0, "runs": 0} for k in keys}
+    out = {k: _new_bucket("month", k) for k in keys}
     for r in _runs(conn, date.fromisoformat(keys[0] + "-01")):
         b = out.get(r["start_local"][:7])
         if b:
-            b["distance_m"] += r["distance_m"] or 0
-            b["duration_s"] += r["duration_s"] or 0
-            b["runs"] += 1
+            _add_run(b, r)
     return list(out.values())
 
 
