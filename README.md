@@ -66,6 +66,7 @@ python3 -m venv .venv
 ```
 
 To try the dashboard without a Garmin account: `.venv/bin/python -m runapp demo`, then `.venv/bin/python -m runapp serve --demo`.
+`demo --days 2190` makes six years of made-up runs instead of one, to try the long chart ranges.
 
 (`python` on its own won't work unless you first run `source .venv/bin/activate`.)
 
@@ -91,6 +92,11 @@ The app is designed for the phone first; on a computer the same pages sit side b
 - **Progress**: **Training** (zones, efficiency, monthly distance), **Workouts** (threshold and interval sessions;
   on a phone a session opens as its own page) and **Form**.
 - **History**: **Activities** and **Races & records**.
+
+The range buttons on the weekly chart and on the zones chart (12 wk, 26 wk, 52 wk, 2 yr, All) set one range for every
+chart that covers time: weekly distance, zones, efficiency and monthly distance (which never shows less than 12 months).
+**All** starts at the week of your first run. Up to a year the charts show a bar per week; at 2 yr and All they show a
+bar per month, so they stay readable.
 
 The ↻ button syncs Garmin; the sliders button holds the settings (km or miles, light or dark appearance, install, log out).
 
@@ -208,7 +214,8 @@ installed and you've logged in once by running `claude` in a terminal.
 - **Acute:chronic load**: running distance in the last 7 days divided by the 4-week weekly average.
   Values well above 1.5 mean volume is rising quickly.
 - **Aerobic efficiency**: average speed (m/min) divided by average heart rate, for runs of 20+ minutes. The trend line
-  uses easy runs (≥70% of time in HR zones 1–2) only.
+  uses easy runs (≥70% of time in HR zones 1–2) only, averaged over the 28 days up to each run. The chart covers the
+  range you picked.
 - **HR zones** are the Norwegian (Olympiatoppen) zones, as percentages of your max heart rate (set it on the
   Training view; 190 until you do): zone 1 from 60%, zone 2 from 72%, zone 3 from 82%, zone 4 from 87%, zone 5 from
   92%. Time in each zone is counted from your second-by-second heart rate; runs with no heart-rate stream fall back

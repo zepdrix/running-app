@@ -21,10 +21,13 @@ function showOffline(savedAt) {
 
 const KM_PER_MI = 1.609344;
 const TABS = ["overview", "plan", "workouts", "form", "training", "records", "activities"];
-const state = { data: null, unit: "km", weeks: 26, tab: "overview", charts: {} };
+// Chart ranges: weeks ending with this week, or "all" (from the week of the first run).
+const RANGES = ["12", "26", "52", "104", "all"];
+const state = { data: null, unit: "km", weeks: "26", tab: "overview", charts: {} };
 try {
   state.unit = localStorage.getItem("unit") || "km";
-  state.weeks = Number(localStorage.getItem("weeks")) || 26;
+  const weeks = localStorage.getItem("weeks");
+  state.weeks = RANGES.includes(weeks) ? weeks : "26";
   state.tab = localStorage.getItem("tab") || "overview";
 } catch {}
 if (TABS.includes(location.hash.slice(1))) state.tab = location.hash.slice(1);
@@ -153,7 +156,7 @@ function render() {
   document.getElementById("demo-banner").hidden = !d.demo;
   document.getElementById("logout-btn").hidden = !d.auth;
   document.querySelectorAll("#units button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.unit === state.unit));
-  document.querySelectorAll(".range button").forEach((b) => b.setAttribute("aria-pressed", Number(b.dataset.weeks) === state.weeks));
+  document.querySelectorAll(".range button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.weeks === state.weeks));
   document.querySelectorAll(".unit-name").forEach((el) => (el.textContent = unitLabel()));
   const o = d.overview;
   document.getElementById("data-range").textContent = o.activity_count
@@ -180,11 +183,11 @@ function render() {
 function renderCharts() {
   const d = state.data;
   if (!d) return;
-  if (state.tab === "overview") renderWeekly(d.weekly, d.goals);
+  if (state.tab === "overview") renderWeekly(d);
   if (state.tab === "training") {
-    renderZones(d.weekly);
-    renderEfficiency(d.efficiency);
-    renderMonthly(d.monthly);
+    renderZones(d);
+    renderEfficiency(d);
+    renderMonthly(d);
   }
   if (state.tab === "workouts") loadWorkouts();
   if (state.tab === "form") loadForm();
@@ -399,140 +402,222 @@ function draw(id, config) {
 
 const weekLabel = (w) => new Date(w + "T00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
-function renderWeekly(weeks, goals) {
-  const goal = goals.find((g) => g.kind === "weekly_distance");
+// Time on the x-axis is a "day number" (UTC days since 1970 from the ISO date), so every chart, card or detail view,
+// keeps real gaps between dates and one window survives switching between monthly, weekly and daily bars.
+const DAY_MS = 864e5;
+const dayNum = (iso) => { const [y, m, d] = iso.slice(0, 10).split("-").map(Number); return Date.UTC(y, m - 1, d) / DAY_MS; };
+const dayIso = (n) => new Date(n * DAY_MS).toISOString().slice(0, 10);
+const fmtDay = (iso, opts) => new Date(`${iso}T00:00`).toLocaleDateString(undefined, opts);
+const monthStart = (n) => dayNum(dayIso(n).slice(0, 7) + "-01");
+// One entry per bar size. start(n) is the first day of the bucket holding day n; 1970-01-05 (day 4) was a Monday.
+const BUCKETS = {
+  day: {
+    noun: "day", key: (r) => r.day, len: () => 1, start: (n) => n, next: (n) => n + 1,
+    tick: (iso) => fmtDay(iso, { month: "short", day: "numeric" }),
+    title: (iso) => fmtDay(iso, { weekday: "short", month: "short", day: "numeric", year: "numeric" }),
+  },
+  week: {
+    noun: "week", key: (r) => r.week, len: () => 7, start: (n) => n - (((n + 3) % 7) + 7) % 7, next: (n) => n + 7,
+    tick: (iso) => fmtDay(iso, { month: "short", day: "numeric" }),
+    title: (iso) => `Week of ${fmtDay(iso, { month: "short", day: "numeric", year: "numeric" })}`,
+  },
+  month: {
+    noun: "month", key: (r) => r.month + "-01", start: monthStart, next: (n) => monthStart(monthStart(n) + 31),
+    len: (iso) => { const [y, m] = iso.split("-").map(Number); return new Date(Date.UTC(y, m, 0)).getUTCDate(); },
+    tick: (iso) => `${fmtDay(iso, { month: "short" })} ’${iso.slice(2, 4)}`,
+    title: (iso) => fmtDay(iso, { month: "long", year: "numeric" }),
+  },
+};
+const bucketCentre = (bucket, startIso) => dayNum(startIso) + (BUCKETS[bucket].len(startIso) - 1) / 2;
+// The days a set of bars covers, with half a day either side so the end bars aren't cut in half.
+function barsWindow(bucket, rows) {
+  const B = BUCKETS[bucket];
+  const last = B.key(rows[rows.length - 1]);
+  return { min: dayNum(B.key(rows[0])) - 0.5, max: dayNum(last) + B.len(last) - 0.5 };
+}
+// Tick size for charts whose points aren't buckets (efficiency): by how many days are shown.
+const spanBucket = (min, max) => (max - min > 730 ? "month" : max - min > 56 ? "week" : "day");
+
+// Shared x-scale: one tick per bucket (at bar centres, or bucket starts for points), thinned by autoskip so labels never overlap.
+function timeAxis(bucket, min, max, at = "centre") {
+  const B = BUCKETS[bucket];
+  return {
+    type: "linear",
+    bounds: "data", // the default "ticks" would widen min/max to round numbers
+    offset: false,
+    min, max,
+    grid: { display: false },
+    border: { color: css("--axis") },
+    ticks: {
+      color: css("--muted"), maxRotation: 0, autoSkip: true, autoSkipPadding: 16,
+      callback: (v) => B.tick(dayIso(B.start(Math.floor(v)))),
+    },
+    afterBuildTicks(scale) {
+      const ticks = [];
+      for (let s = B.start(Math.floor(scale.min)); s <= scale.max; s = B.next(s)) {
+        const v = at === "centre" ? bucketCentre(bucket, dayIso(s)) : s;
+        if (v >= scale.min && v <= scale.max) ticks.push({ value: v });
+      }
+      scale.ticks = ticks;
+    },
+  };
+}
+const xOf = (bucket, row) => bucketCentre(bucket, BUCKETS[bucket].key(row));
+const bucketTitle = (bucket, x) => BUCKETS[bucket].title(dayIso(BUCKETS[bucket].start(Math.floor(x))));
+
+// The chart range: from the dashboard, or worked out from the weeks of a reply saved by an older version of the app.
+const rangeOf = (d) => d.range || { weeks: d.weekly.length, all: false, start: d.weekly[0]?.week };
+// Cards show weekly bars up to a year and monthly bars beyond (older saved replies lack monthly detail: stay weekly).
+const cardBucket = (d) => (rangeOf(d).weeks > 52 && d.monthly[0]?.zones_s ? "month" : "week");
+const rangeMonths = (d) => d.monthly.filter((m) => m.month >= rangeOf(d).start.slice(0, 7));
+const cardRows = (d, bucket) => (bucket === "month" ? rangeMonths(d) : d.weekly);
+
+// Stacked bars over time, shared by weekly distance and zones. Each series is { label, color, value(row) }.
+function stackedBarsConfig({ rows, bucket, win, series, yTick, label, afterBody, filter, extra = [], maxBarThickness = 24 }) {
   const surface = css("--surface");
-  const datasets = RUN_KINDS.map((k) => ({
+  const datasets = series.map((s) => ({
     type: "bar",
-    label: KINDS[k].label,
-    data: weeks.map((w) => +dist(w.by_kind_m[k] || 0).toFixed(1)),
-    backgroundColor: css(KINDS[k].color),
+    label: s.label,
+    data: rows.map((r) => ({ x: xOf(bucket, r), y: s.value(r), r })),
+    backgroundColor: s.color,
     borderColor: surface,
     borderWidth: { top: 2 },
     borderSkipped: "start",
-    maxBarThickness: 24,
-    stack: "km",
+    maxBarThickness,
+    stack: "total",
     order: 2,
   }));
-  let legend = kindLegend(RUN_KINDS);
-  if (goal) {
-    datasets.push({
-      type: "line",
-      label: "Weekly goal",
-      data: weeks.map(() => +dist(goal.target).toFixed(1)),
-      borderColor: css("--text-primary"),
-      borderWidth: 2,
-      borderDash: [6, 4],
-      pointRadius: 0,
-      order: 1,
-    });
-    legend += `<span><i class="line-key" style="background:${css("--text-primary")}"></i>Weekly goal</span>`;
-  }
-  document.getElementById("weekly-legend").innerHTML = legend;
-  draw("weekly-chart", {
-    data: { labels: weeks.map((w) => weekLabel(w.week)), datasets },
+  const base = baseOptions();
+  return {
+    data: { datasets: [...datasets, ...extra] },
     options: baseOptions({
+      interaction: { mode: "index", axis: "x", intersect: false },
       scales: {
-        ...baseOptions().scales,
-        x: { ...baseOptions().scales.x, stacked: true },
-        y: { ...baseOptions().scales.y, stacked: true, ticks: { color: css("--muted"), callback: (v) => `${v} ${unitLabel()}` } },
+        x: { ...timeAxis(bucket, win.min, win.max), stacked: true },
+        y: { ...base.scales.y, stacked: true, ticks: { color: css("--muted"), callback: yTick } },
       },
       plugins: {
-        ...baseOptions().plugins,
+        ...base.plugins,
         tooltip: {
-          ...baseOptions().plugins.tooltip,
-          filter: (item) => item.raw > 0,
+          ...base.plugins.tooltip,
+          filter,
           itemSort: (a, b) => b.datasetIndex - a.datasetIndex,
-          callbacks: {
-            title: (items) => `Week of ${items[0].label}`,
-            label: (item) => ` ${item.dataset.label}: ${item.raw} ${unitLabel()}`,
-            afterBody: (items) => {
-              const w = weeks[items[0].dataIndex];
-              return [`Total ${fmtDist(w.distance_m)} ${unitLabel()} · ${w.runs} runs · ${fmtTime(w.duration_s)}`];
-            },
-          },
+          callbacks: { title: (items) => bucketTitle(bucket, items[0].raw.x), label, afterBody },
         },
       },
     }),
+  };
+}
+
+function weeklyGoal(goals) {
+  return goals.find((g) => g.kind === "weekly_distance");
+}
+function weeklyLegend(bucket, goals) {
+  let legend = kindLegend(RUN_KINDS);
+  if (bucket === "week" && weeklyGoal(goals)) legend += `<span><i class="line-key" style="background:${css("--text-primary")}"></i>Weekly goal</span>`;
+  return legend;
+}
+function weeklyConfig(rows, bucket, win, { goals = [], maxBarThickness } = {}) {
+  const goal = bucket === "week" && weeklyGoal(goals); // the goal is per week: no line on monthly or daily bars
+  const extra = goal ? [{
+    type: "line",
+    label: "Weekly goal",
+    data: rows.map((r) => ({ x: xOf(bucket, r), y: +dist(goal.target).toFixed(1) })),
+    borderColor: css("--text-primary"),
+    borderWidth: 2,
+    borderDash: [6, 4],
+    pointRadius: 0,
+    order: 1,
+  }] : [];
+  return stackedBarsConfig({
+    rows, bucket, win, extra, maxBarThickness,
+    series: RUN_KINDS.map((k) => ({ label: KINDS[k].label, color: css(KINDS[k].color), value: (r) => +dist(r.by_kind_m[k] || 0).toFixed(1) })),
+    yTick: (v) => `${v} ${unitLabel()}`,
+    filter: (item) => item.raw.y > 0,
+    label: (item) => ` ${item.dataset.label}: ${item.raw.y} ${unitLabel()}`,
+    afterBody: (items) => {
+      const r = items[0].raw.r;
+      return r ? [`Total ${fmtDist(r.distance_m)} ${unitLabel()} · ${r.runs} runs · ${fmtTime(r.duration_s)}`] : [];
+    },
   });
+}
+
+function renderWeekly(d) {
+  const bucket = cardBucket(d), rows = cardRows(d, bucket);
+  document.getElementById("weekly-sub").textContent = bucket === "month" ? "Monthly, split by kind of run" : "Split by kind of run";
+  document.getElementById("weekly-legend").innerHTML = weeklyLegend(bucket, d.goals);
+  draw("weekly-chart", weeklyConfig(rows, bucket, barsWindow(bucket, rows), { goals: d.goals }));
 }
 
 const ZONES = ["--z1", "--z2", "--z3", "--z4", "--z5"];
-function renderZones(weeks) {
-  document.getElementById("zone-legend").innerHTML = ZONES.map(
-    (z, i) => `<span><i class="swatch" style="background:${css(z)}"></i>Zone ${i + 1} · ${state.data.overview.hr_zones.ranges[i]} bpm${i < 2 ? " · easy" : i === 2 ? " · sub-threshold" : ""}</span>`
-  ).join("");
-  const surface = css("--surface");
-  draw("zone-chart", {
-    type: "bar",
-    data: {
-      labels: weeks.map((w) => weekLabel(w.week)),
-      datasets: ZONES.map((z, i) => ({
-        label: `Zone ${i + 1}`,
-        data: weeks.map((w) => +(w.zones_s[i] / 3600).toFixed(2)),
-        backgroundColor: css(z),
-        borderColor: surface,
-        borderWidth: { top: 2 },
-        borderSkipped: "start",
-        maxBarThickness: 24,
-      })),
-    },
-    options: baseOptions({
-      scales: {
-        ...baseOptions().scales,
-        x: { ...baseOptions().scales.x, stacked: true },
-        y: { ...baseOptions().scales.y, stacked: true, ticks: { color: css("--muted"), callback: (v) => `${v} h` } },
-      },
-      plugins: {
-        ...baseOptions().plugins,
-        tooltip: {
-          ...baseOptions().plugins.tooltip,
-          itemSort: (a, b) => b.datasetIndex - a.datasetIndex,
-          callbacks: {
-            title: (items) => `Week of ${items[0].label}`,
-            label: (item) => ` ${item.dataset.label}: ${fmtTime(item.raw * 3600)}`,
-          },
-        },
-      },
-    }),
+const zoneLegend = () => ZONES.map(
+  (z, i) => `<span><i class="swatch" style="background:${css(z)}"></i>Zone ${i + 1} · ${state.data.overview.hr_zones.ranges[i]} bpm${i < 2 ? " · easy" : i === 2 ? " · sub-threshold" : ""}</span>`
+).join("");
+function zoneConfig(rows, bucket, win, { maxBarThickness } = {}) {
+  return stackedBarsConfig({
+    rows, bucket, win, maxBarThickness,
+    series: ZONES.map((z, i) => ({ label: `Zone ${i + 1}`, color: css(z), value: (r) => +(r.zones_s[i] / 3600).toFixed(2) })),
+    yTick: (v) => `${v} h`,
+    label: (item) => ` ${item.dataset.label}: ${fmtTime(item.raw.y * 3600)}`,
   });
 }
 
-function renderEfficiency(points) {
-  const adj = state.heatAdj;
-  const val = (p) => (adj ? p.ef_adj : p.ef);
-  // 28-day rolling mean of easy runs only, so hard sessions don't swing the trend.
-  const easy = points.filter((p) => p.easy);
-  const rolling = (f) => easy.map((p) => {
-    const t = new Date(p.date).getTime();
-    const win = easy.filter((q) => { const dt = t - new Date(q.date).getTime(); return dt >= 0 && dt < 28 * 864e5; });
-    return { x: p.date, y: +(win.reduce((s, q) => s + f(q), 0) / win.length).toFixed(3) };
+function renderZones(d) {
+  const bucket = cardBucket(d), rows = cardRows(d, bucket);
+  document.getElementById("zone-sub").textContent = `Hours per ${BUCKETS[bucket].noun}, Norwegian zones. Zones 1–2 are easy.`;
+  document.getElementById("zone-legend").innerHTML = zoneLegend();
+  draw("zone-chart", zoneConfig(rows, bucket, barsWindow(bucket, rows)));
+}
+
+// 28-day rolling mean of easy runs only, so hard sessions don't swing the trend. Each run's window is every
+// easy run from the 27 days before it up to its own date (same-day runs included). Points are in date order.
+function rollingTrend(easy, f) {
+  const t = easy.map((p) => dayNum(p.date));
+  const pre = [0];
+  easy.forEach((p, i) => pre.push(pre[i] + f(p)));
+  let lo = 0, hi = 0;
+  return easy.map((p, i) => {
+    while (t[i] - t[lo] >= 28) lo++;
+    if (hi < i) hi = i;
+    while (hi + 1 < easy.length && t[hi + 1] <= t[i]) hi++;
+    return { x: t[i], y: +((pre[hi + 1] - pre[lo]) / (hi + 1 - lo)).toFixed(3) };
   });
+}
+
+function efficiencyLegend(points) {
+  const adj = state.heatAdj;
   const shown = RUN_KINDS.filter((k) => points.some((p) => p.kind === k));
-  document.getElementById("ef-legend").innerHTML = shown
+  return shown
     .map((k) => `<span><i class="swatch" style="background:${css(KINDS[k].color)};border-radius:50%"></i>${KINDS[k].label}</span>`)
     .join("") +
     `<span><i class="line-key" style="background:${css("--text-primary")}"></i>Easy-run trend${adj ? ", heat-adjusted" : ""}</span>` +
     (adj ? `<span><i class="line-key" style="background:${css("--muted")}"></i>Raw trend</span>` : "");
+}
+function efficiencyConfig(points, win) {
+  const adj = state.heatAdj;
+  const val = (p) => (adj ? p.ef_adj : p.ef);
+  const easy = points.filter((p) => p.easy);
+  // Years of runs pack the dots tightly: smaller dots without the outline, so they don't paint over each other.
+  const colors = Object.fromEntries(RUN_KINDS.map((k) => [k, css(KINDS[k].color)])); // read the theme once, not per run
+  const dense = points.filter((p) => { const x = dayNum(p.date); return x >= win.min && x <= win.max; }).length > 300;
   const datasets = [
-    { label: "Easy-run trend", data: rolling(val), borderColor: css("--text-primary"), borderWidth: 2, pointRadius: 0, tension: 0.3, order: 1 },
+    { label: "Easy-run trend", data: rollingTrend(easy, val), borderColor: css("--text-primary"), borderWidth: 2, pointRadius: 0, tension: 0.3, order: 1 },
     {
       label: "Run",
-      data: points.map((p) => ({ x: p.date, y: +val(p).toFixed(3), p })),
-      showLine: false, pointRadius: 4, pointHoverRadius: 6, order: 2,
-      pointBackgroundColor: points.map((p) => css((KINDS[p.kind] || KINDS.easy).color)),
-      pointBorderColor: css("--surface"), pointBorderWidth: 2,
+      data: points.map((p) => ({ x: dayNum(p.date), y: +val(p).toFixed(3), p })),
+      showLine: false, pointRadius: dense ? 2.5 : 4, pointHoverRadius: 6, order: 2,
+      pointBackgroundColor: points.map((p) => colors[p.kind] || colors.easy),
+      pointBorderColor: css("--surface"), pointBorderWidth: dense ? 0 : 2,
     },
   ];
-  if (adj) datasets.splice(1, 0, { label: "Raw trend", data: rolling((p) => p.ef), borderColor: css("--muted"), borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: 0.3, order: 1 });
-  draw("ef-chart", {
+  if (adj) datasets.splice(1, 0, { label: "Raw trend", data: rollingTrend(easy, (p) => p.ef), borderColor: css("--muted"), borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: 0.3, order: 1 });
+  return {
     type: "line",
     data: { datasets },
     options: baseOptions({
       interaction: { mode: "nearest", intersect: false },
       scales: {
-        x: { type: "category", labels: [...new Set(points.map((p) => p.date))], grid: { display: false }, border: { color: css("--axis") },
-             ticks: { color: css("--muted"), maxRotation: 0, autoSkipPadding: 24, callback(v) { return weekLabel(this.getLabelForValue(v)); } } },
+        x: timeAxis(spanBucket(win.min, win.max), win.min, win.max, "start"),
         y: { beginAtZero: false, grid: { color: css("--grid") }, border: { display: false }, ticks: { color: css("--muted") } },
       },
       plugins: {
@@ -540,7 +625,7 @@ function renderEfficiency(points) {
         tooltip: {
           ...baseOptions().plugins.tooltip,
           callbacks: {
-            title: (items) => fmtDate(items[0].raw.x),
+            title: (items) => fmtDate(dayIso(items[0].raw.x)),
             label: (item) => {
               const p = item.raw.p;
               if (!p) return ` ${item.dataset.label}: ${item.raw.y}`;
@@ -555,35 +640,60 @@ function renderEfficiency(points) {
         },
       },
     }),
-  });
+  };
+}
+// Efficiency spans the chosen range up to today, whatever days have runs.
+const efficiencyWindow = (d) => ({ min: dayNum(rangeOf(d).start) - 0.5, max: dayNum(isoToday()) + 0.5 });
+
+function renderEfficiency(d) {
+  document.getElementById("ef-legend").innerHTML = efficiencyLegend(d.efficiency);
+  draw("ef-chart", efficiencyConfig(d.efficiency, efficiencyWindow(d)));
 }
 
-function renderMonthly(months) {
-  draw("monthly-chart", {
+function monthlyConfig(rows, win, { maxBarThickness = 24 } = {}) {
+  const base = baseOptions();
+  return {
     type: "bar",
     data: {
-      labels: months.map((m) => new Date(m.month + "-01T00:00").toLocaleDateString(undefined, { month: "short", year: "2-digit" })),
       datasets: [
         {
           label: `Distance (${unitLabel()})`,
-          data: months.map((m) => +dist(m.distance_m).toFixed(1)),
+          data: rows.map((m) => ({ x: xOf("month", m), y: +dist(m.distance_m).toFixed(1), r: m })),
           backgroundColor: css("--c-long"),
           borderRadius: { topLeft: 4, topRight: 4 },
           borderSkipped: "start",
-          maxBarThickness: 24,
+          maxBarThickness,
         },
       ],
     },
     options: baseOptions({
+      interaction: { mode: "index", axis: "x", intersect: false },
+      scales: { x: timeAxis("month", win.min, win.max), y: base.scales.y },
       plugins: {
-        ...baseOptions().plugins,
+        ...base.plugins,
         tooltip: {
-          ...baseOptions().plugins.tooltip,
-          callbacks: { afterBody: (items) => `${months[items[0].dataIndex].runs} runs · ${fmtTime(months[items[0].dataIndex].duration_s)}` },
+          ...base.plugins.tooltip,
+          callbacks: {
+            title: (items) => bucketTitle("month", items[0].raw.x),
+            afterBody: (items) => `${items[0].raw.r.runs} runs · ${fmtTime(items[0].raw.r.duration_s)}`,
+          },
         },
       },
     }),
-  });
+  };
+}
+
+// The monthly chart follows the range but never shows fewer than 12 months.
+function monthlySubtitle(d) {
+  const range = rangeOf(d);
+  if (d.monthly.length === 12) return "Last 12 months";
+  if (!range.all && range.weeks === 104) return "Last 2 years";
+  return `Since ${fmtDay(range.start, { month: "short", year: "numeric" })}`;
+}
+
+function renderMonthly(d) {
+  document.getElementById("monthly-sub").textContent = monthlySubtitle(d);
+  draw("monthly-chart", monthlyConfig(d.monthly, barsWindow("month", d.monthly)));
 }
 
 // ---------- tables ----------
@@ -689,7 +799,7 @@ document.querySelectorAll("#units button").forEach((b) =>
 );
 document.querySelectorAll(".range button").forEach((b) =>
   b.addEventListener("click", () => {
-    state.weeks = Number(b.dataset.weeks);
+    state.weeks = b.dataset.weeks;
     try { localStorage.setItem("weeks", state.weeks); } catch {}
     load();
   })

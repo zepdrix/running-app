@@ -100,6 +100,108 @@ def test_weekly_buckets_monday_start(conn):
     assert [(w["week"], w["distance_m"]) for w in weeks] == [("2026-09-21", 10000), ("2026-09-28", 5000)]
 
 
+WEEKLY_KEYS = {"week", "distance_m", "duration_s", "runs", "long_run_m", "load", "zones_s", "by_kind_m"}
+
+
+def test_weekly_output_unchanged_by_refactor(conn):
+    add_run(conn, 1, "2026-09-28 07:00:00", 5)
+    (w,) = analysis.weekly(conn, 1, today=date(2026, 10, 2))
+    assert set(w) == WEEKLY_KEYS
+    assert set(w["by_kind_m"]) == set(analysis.WORKOUT_KINDS) and len(w["zones_s"]) == 5
+
+
+def test_weekly_spans_several_years(conn):
+    today = date(2026, 10, 2)
+    add_run(conn, 1, "2023-10-10 07:00:00", 8)  # Tuesday, week of Oct 9 2023
+    add_run(conn, 2, "2025-04-01 07:00:00", 6)
+    add_run(conn, 3, "2026-09-29 07:00:00", 4)
+    weeks = analysis.weekly(conn, 160, today=today)
+    assert len(weeks) == 160
+    assert weeks[-1]["week"] == "2026-09-28"
+    assert all(date.fromisoformat(w["week"]).weekday() == 0 for w in weeks)
+    oldest = next(w for w in weeks if w["runs"])
+    assert oldest["week"] == "2023-10-09" and oldest["distance_m"] == 8000
+    assert sum(w["distance_m"] for w in weeks) == 18000 and sum(w["runs"] for w in weeks) == 3
+
+
+def test_history_weeks_counts_from_first_run(conn):
+    today = date(2026, 10, 2)  # Friday; this week starts Monday Sep 28
+    assert analysis.history_weeks(conn, today) == 12  # no runs
+    add_run(conn, 1, "2026-09-22 07:00:00", 5)  # 10 days ago
+    assert analysis.history_weeks(conn, today) == 12
+    sunday = date(2026, 9, 28) - timedelta(weeks=130) + timedelta(days=6)  # last day of the week 130 weeks back
+    assert sunday.weekday() == 6
+    add_run(conn, 2, f"{sunday} 18:00:00", 5)
+    assert analysis.history_weeks(conn, today) == 131
+    assert analysis.range_start(131, today) == date(2026, 9, 28) - timedelta(weeks=130)
+    add_run(conn, 3, "1986-05-01 07:00:00", 5)
+    assert analysis.history_weeks(conn, today) == analysis.MAX_WEEKS == 1560
+
+
+def test_months_since_counts_calendar_months():
+    today = date(2026, 10, 2)
+    assert analysis.months_since(date(2026, 10, 1), today) == 1
+    assert analysis.months_since(date(2025, 11, 30), today) == 12
+    assert analysis.months_since(date(2024, 7, 15), today) == 28
+
+
+def test_monthly_buckets_carry_kinds_and_zones_across_years(conn):
+    add_run(conn, 1, "2024-12-31 07:00:00", 6)
+    add_run(conn, 2, "2025-01-01 07:00:00", 7)
+    add_run(conn, 3, "2025-01-31 23:30:00", 16)  # long run, late on the last day of January
+    add_run(conn, 4, "2025-02-01 06:00:00", 9)
+    months = analysis.monthly(conn, 30, today=date(2026, 10, 2))
+    assert len(months) == 30 and months[0]["month"] == "2024-05" and months[-1]["month"] == "2026-10"
+    by = {m["month"]: m for m in months}
+    assert by["2024-12"]["distance_m"] == 6000
+    assert by["2025-01"]["distance_m"] == 23000 and by["2025-01"]["runs"] == 2
+    assert by["2025-02"]["distance_m"] == 9000
+    jan = by["2025-01"]
+    assert set(jan) == WEEKLY_KEYS - {"week"} | {"month"}
+    assert jan["long_run_m"] == 16000
+    assert sum(jan["by_kind_m"].values()) == jan["distance_m"]
+    assert jan["by_kind_m"]["long"] == 16000
+    rows = conn.execute("SELECT z1_s, z2_s, z3_s, z4_s, z5_s FROM activities WHERE id IN (2, 3)").fetchall()
+    assert jan["zones_s"] == pytest.approx([sum(r[z] or 0 for r in rows) for z in range(5)])
+    assert sum(jan["zones_s"]) > 0
+
+
+def test_dashboard_ranges_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runapp.server import app
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
+    today = date.today()
+    c = db.connect(config.DB_PATH)
+    add_run(c, 1, f"{today - timedelta(days=200)} 07:00:00", 6)
+    add_run(c, 2, f"{today - timedelta(days=3)} 07:00:00", 5)
+    c.close()
+    client = TestClient(app)
+
+    d = client.get("/api/dashboard?weeks=all").json()
+    assert d["range"]["all"] is True
+    assert len(d["weekly"]) == d["range"]["weeks"] >= 12
+    assert d["range"]["start"] == d["weekly"][0]["week"]
+    assert sum(w["runs"] for w in d["weekly"]) == 2
+
+    d = client.get("/api/dashboard?weeks=12").json()
+    assert d["range"] == {"weeks": 12, "all": False, "start": d["weekly"][0]["week"]}
+    assert len(d["monthly"]) == 12  # never fewer than 12 months
+    assert [p["id"] for p in d["efficiency"]] == [2]  # the run from 200 days ago is outside the range
+
+    d = client.get("/api/dashboard?weeks=104").json()
+    assert len(d["weekly"]) == 104 and len(d["monthly"]) >= 24
+    assert d["monthly"][0]["month"] <= d["range"]["start"][:7]
+    assert sorted(p["id"] for p in d["efficiency"]) == [1, 2]
+
+    for bad in ("0", "-1", "abc", "10000", "12.5"):
+        assert client.get(f"/api/dashboard?weeks={bad}").status_code == 422, bad
+    assert client.get("/api/dashboard?weeks=5000").json()["range"]["weeks"] == 1560
+    d = client.get("/api/dashboard").json()
+    assert d["range"]["weeks"] == 26 and len(d["weekly"]) == 26
+
+
 def test_race_goal_projection(conn):
     add_run(conn, 1, "2026-09-20 07:00:00", 10.1, pace=300)  # 10k in 50:00
     conn.execute("INSERT INTO goals (kind, distance_m, target) VALUES ('race', 21097.5, 6700)")
