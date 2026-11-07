@@ -562,6 +562,28 @@ dialog.sheet::backdrop { background: rgba(8, 10, 16, 0.6); backdrop-filter: blur
 .sheet-actions .grow { flex: 1; }
 button.danger { color: var(--critical-text); }
 dialog.pacing { width: min(620px, calc(100vw - 32px)); }
+
+/* chart detail view: one range chart, large, zoomable along time */
+/* right after the title (the markup puts it there), so it stays on the title's line when the other controls wrap */
+.card-title .chart-expand { flex-shrink: 0; }
+.chart-expand .icon { width: 15px; height: 15px; }
+dialog.chart-detail {
+  border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px;
+  width: min(1200px, calc(100vw - 48px)); height: min(820px, calc(100dvh - 48px)); max-width: none; max-height: none;
+  background: var(--surface); color: var(--text-primary); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+dialog.chart-detail[open] { display: flex; flex-direction: column; gap: 10px; }
+dialog.chart-detail::backdrop { background: rgba(8, 10, 16, 0.6); backdrop-filter: blur(3px); }
+.detail-head { display: flex; align-items: center; gap: 10px; }
+.detail-head h2 { flex: 1; font-size: 18px; }
+.detail-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.detail-tools .detail-zoom { margin-left: auto; }
+.detail-zoom button { min-width: 34px; font-size: 15px; }
+.detail-zoom button[data-zoom="reset"] { font-size: 13px; }
+.detail-chart { position: relative; flex: 1; min-height: 0; }
+#detail-chart { touch-action: none; }
+.detail-caption { margin: 0; font-size: 12px; }
+body:has(dialog.chart-detail[open]) { overflow: hidden; }
 .pace-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
 .pace-target { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); font-weight: 600; }
 .pace-target input { width: 120px; font-size: 18px; font-family: var(--font-display); font-weight: 600; padding: 6px 10px; }
@@ -972,6 +994,12 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
     max-height: calc(100dvh - env(safe-area-inset-top) - 24px); padding-bottom: env(safe-area-inset-bottom);
   }
   .sheet-actions button { min-height: 44px; padding: 8px 18px; border-radius: 12px; font-size: 15px; }
+  /* the chart detail view takes the whole screen, clear of the notch and home bar */
+  dialog.chart-detail {
+    width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; border-radius: 0; border: 0;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  .chart-expand, .detail-zoom button { min-width: 38px; min-height: 38px; }
   .sheet-form { padding: 16px; }
   .pace-table td, .pace-table th { padding: 8px 5px; white-space: normal; }
   .pace-table td:last-child { font-size: 12px; color: var(--text-secondary); }

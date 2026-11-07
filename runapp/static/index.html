@@ -125,6 +125,7 @@
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="route"></span></span>
           <div class="grow"><h2>Weekly distance</h2><div class="sub" id="weekly-sub">Split by kind of run</div></div>
+          <button type="button" class="ghost icon-btn chart-expand" data-detail="weekly" aria-label="Weekly distance, full screen" title="Full screen"><span data-icon="expand"></span></button>
           <div class="segmented range" role="group" aria-label="Range">
             <button data-weeks="12">12 wk</button><button data-weeks="26">26 wk</button><button data-weeks="52">52 wk</button><button data-weeks="104">2 yr</button><button data-weeks="all">All</button>
           </div>
@@ -280,6 +281,7 @@
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="heart"></span></span>
           <div class="grow"><h2>Time in heart-rate zones</h2><div class="sub" id="zone-sub">Hours per week, Norwegian zones. Zones 1–2 are easy.</div></div>
+          <button type="button" class="ghost icon-btn chart-expand" data-detail="zones" aria-label="Time in heart-rate zones, full screen" title="Full screen"><span data-icon="expand"></span></button>
           <form class="zone-settings" id="zone-form">
             <label>Max HR <input type="number" name="max_hr" min="140" max="230" step="1" aria-label="Max heart rate"></label>
             <button type="submit" class="ghost">Update</button>
@@ -296,6 +298,7 @@
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="trend"></span></span>
           <div class="grow"><h2>Aerobic efficiency</h2><div class="sub">Meters per minute per heartbeat. Rising = fitter. Heat-adjusted removes the cost of temperature + dew point.</div></div>
+          <button type="button" class="ghost icon-btn chart-expand" data-detail="efficiency" aria-label="Aerobic efficiency, full screen" title="Full screen"><span data-icon="expand"></span></button>
           <div data-heat-slot></div>
         </div>
         <div class="legend" id="ef-legend"></div>
@@ -305,6 +308,7 @@
         <div class="card-title">
           <span class="badge-icon"><span class="icon" data-icon="calendar"></span></span>
           <div class="grow"><h2>Monthly distance</h2><div class="sub" id="monthly-sub">Last 12 months</div></div>
+          <button type="button" class="ghost icon-btn chart-expand" data-detail="monthly" aria-label="Monthly distance, full screen" title="Full screen"><span data-icon="expand"></span></button>
         </div>
         <div class="chart-box"><canvas id="monthly-chart" role="img" aria-label="Monthly running distance"></canvas></div>
       </article>
@@ -441,6 +445,25 @@
   </aside>
 </div>
 
+<!-- A range chart full screen: zoom and pan along time (chartjs-plugin-zoom). Opened by the cards' expand buttons. -->
+<dialog id="chart-detail" class="chart-detail" aria-labelledby="detail-title">
+  <div class="detail-head">
+    <h2 id="detail-title"></h2>
+    <button type="button" class="icon-btn detail-close" id="detail-close" aria-label="Close">×</button>
+  </div>
+  <div class="detail-tools">
+    <div class="segmented range" role="group" aria-label="Range">
+      <button data-weeks="12">12 wk</button><button data-weeks="26">26 wk</button><button data-weeks="52">52 wk</button><button data-weeks="104">2 yr</button><button data-weeks="all">All</button>
+    </div>
+    <div class="detail-heat"><div data-heat-slot></div></div>
+    <div class="segmented detail-zoom" role="group" aria-label="Zoom">
+      <button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-zoom="reset">Reset</button>
+    </div>
+  </div>
+  <div class="legend" id="detail-legend"></div>
+  <div class="detail-chart"><canvas id="detail-chart" role="img"></canvas></div>
+  <p class="muted detail-caption" aria-live="polite"><span id="detail-level"></span> · Pinch or scroll to zoom, drag to move</p>
+</dialog>
 <script defer src="/static/app.js"></script>
 </body>
 </html>

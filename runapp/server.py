@@ -338,6 +338,16 @@ def dashboard(weeks: str = WeeksParam):
         conn.close()
 
 
+@app.get("/api/days")
+def days(weeks: str = WeeksParam):
+    """Day-by-day totals over a chart range, fetched only when a chart is zoomed in to a few weeks."""
+    conn = db.connect()
+    try:
+        return {"days": analysis.daily(conn, _range_weeks(conn, weeks))}
+    finally:
+        conn.close()
+
+
 class GoalIn(BaseModel):
     kind: str = Field(pattern="^(race|weekly_distance|monthly_distance|easy_hr_share)$")
     label: str | None = None

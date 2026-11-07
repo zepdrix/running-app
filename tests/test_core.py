@@ -202,6 +202,42 @@ def test_dashboard_ranges_api(tmp_path, monkeypatch):
     assert d["range"]["weeks"] == 26 and len(d["weekly"]) == 26
 
 
+def test_daily_buckets_are_dense_and_local(conn):
+    today = date(2026, 10, 2)  # Friday; two weeks of range start on Monday Sep 21
+    add_run(conn, 1, "2026-09-22 07:00:00", 5)
+    add_run(conn, 2, "2026-09-22 18:00:00", 3)  # two runs on one day are summed
+    add_run(conn, 3, "2026-09-27 23:30:00", 10)  # late evening stays on its local date
+    add_run(conn, 4, "2026-09-20 07:00:00", 8)  # the Sunday before the range
+    days = analysis.daily(conn, 2, today=today)
+    assert [d["day"] for d in days] == [str(date(2026, 9, 21) + timedelta(days=i)) for i in range(12)]
+    by = {d["day"]: d for d in days}
+    assert by["2026-09-22"]["distance_m"] == 8000 and by["2026-09-22"]["runs"] == 2
+    assert by["2026-09-27"]["distance_m"] == 10000 and by["2026-09-28"]["runs"] == 0
+    assert set(days[0]) == WEEKLY_KEYS - {"week"} | {"day"}
+    assert sum(d["distance_m"] for d in days) == 18000
+
+
+def test_days_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runapp.server import app
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "api.db")
+    today = date.today()
+    c = db.connect(config.DB_PATH)
+    add_run(c, 1, f"{today - timedelta(days=300)} 07:00:00", 6)
+    weeks = analysis.history_weeks(c)
+    c.close()
+    client = TestClient(app)
+    days = client.get("/api/days?weeks=all").json()["days"]
+    assert days[0]["day"] == analysis.range_start(weeks).isoformat()
+    assert days[-1]["day"] == today.isoformat()
+    assert sum(d["runs"] for d in days) == 1
+    assert len(client.get("/api/days?weeks=4").json()["days"]) == 21 + today.weekday() + 1
+    for bad in ("0", "abc", "10000"):
+        assert client.get(f"/api/days?weeks={bad}").status_code == 422, bad
+
+
 def test_race_goal_projection(conn):
     add_run(conn, 1, "2026-09-20 07:00:00", 10.1, pace=300)  # 10k in 50:00
     conn.execute("INSERT INTO goals (kind, distance_m, target) VALUES ('race', 21097.5, 6700)")
